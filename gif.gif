@@ -1,0 +1,25 @@
+from PIL import Image, ImageDraw
+import numpy as np
+
+# Load the logo image
+logo = Image.open("logo.png")
+
+# Create a list to hold the frames
+frames = []
+
+# Generate frames for the rotating logo
+for angle in range(0, 360, 10):
+    # Rotate the logo
+    rotated_logo = logo.rotate(angle, resample=Image.BICUBIC, expand=True)
+    
+    # Create a new image with white background to place the rotated logo
+    frame = Image.new("RGBA", rotated_logo.size, (255, 255, 255, 0))
+    frame.paste(rotated_logo, (0, 0), rotated_logo)
+    
+    # Append the frame to the list
+    frames.append(frame)
+
+# Save the frames as a GIF
+frames[0].save("rotating_logo.gif", save_all=True, append_images=frames[1:], loop=0, duration=100)
+
+print("The rotating logo GIF has been created successfully.")

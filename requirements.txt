@@ -1,0 +1,3 @@
+pandas
+pyqt6
+playwright
