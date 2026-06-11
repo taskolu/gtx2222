@@ -1613,77 +1613,52 @@ class SimplePaymentApp(QMainWindow):
         self.statusBar.showMessage(message)
         QApplication.processEvents()  # Process UI events to update immediately
     
+    def _table_row_for_payment(self, row_num):
+        row_idx = row_num - 1
+        if 0 <= row_idx < self.table_widget.rowCount():
+            return row_idx
+        return None
+
+    def _apply_row_status_style(self, row_idx, status):
+        if status == "Completed":
+            bg_color = QColor(0, 100, 0) if self.dark_mode else QColor(200, 255, 200)
+            text_color = QColor(0, 0, 0)
+        elif status == "Error":
+            bg_color = QColor(100, 0, 0) if self.dark_mode else QColor(255, 200, 200)
+            text_color = QColor(255, 255, 255) if self.dark_mode else QColor(0, 0, 0)
+        else:
+            return
+
+        for col in range(self.table_widget.columnCount()):
+            item = self.table_widget.item(row_idx, col)
+            if item:
+                item.setBackground(bg_color)
+                item.setForeground(text_color)
+
     def _update_payment_status(self, row_num, status):
         """Update the status of a specific payment in the table."""
-        # Find the row in the table that corresponds to this row_num
-        for row_idx in range(self.table_widget.rowCount()):
-            table_row_num = self.table_widget.item(row_idx, 0).text()
-            if table_row_num == str(row_num):
-                # Update the status column (column 4)
-                self.table_widget.setItem(row_idx, 4, QTableWidgetItem(status))
-                
-                # Optionally change row color based on status
-                if status == "Completed":
-                    # Choose appropriate colors based on dark mode
-                    if self.dark_mode:
-                        bg_color = QColor(0, 100, 0)  # Darker green for dark mode
-                    else:
-                        bg_color = QColor(200, 255, 200)  # Light green for light mode
-                    
-                    # Set background color for completed rows and ensure text is visible
-                    for col in range(self.table_widget.columnCount()):
-                        item = self.table_widget.item(row_idx, col)
-                        if item:
-                            item.setBackground(bg_color)
-                            item.setForeground(QColor(0, 0, 0))  # Black text for better contrast
-                
-                elif status == "Error":
-                    # Set background color for error rows
-                    error_bg = QColor(100, 0, 0) if self.dark_mode else QColor(255, 200, 200)
-                    error_text = QColor(255, 255, 255) if self.dark_mode else QColor(0, 0, 0)
-                    
-                    for col in range(self.table_widget.columnCount()):
-                        item = self.table_widget.item(row_idx, col)
-                        if item:
-                            item.setBackground(error_bg)
-                            item.setForeground(error_text)
-                break
+        row_idx = self._table_row_for_payment(row_num)
+        if row_idx is None:
+            self.statusBar.showMessage(f"Could not update status for payment #{row_num}: row not found")
+            return
+
+        self.table_widget.setItem(row_idx, 4, QTableWidgetItem(status))
+        self._apply_row_status_style(row_idx, status)
+        QApplication.processEvents()
     
     def _update_payment_reference(self, row_num, reference):
         """Update the reference for a specific payment row in the UI table"""
         self.statusBar.showMessage(f"Reference extracted: {reference} for payment #{row_num}")
         
-        # Find the table row corresponding to the payment row number
-        for row_idx in range(self.table_widget.rowCount()):
-            # Check if this row matches the payment row number
-            template_item = self.table_widget.item(row_idx, 1)  # Template column
-            if template_item:
-                # Find the corresponding payment data
-                for payment in self.payments_data:
-                    if (payment['row_num'] == row_num and 
-                        payment['template'] == template_item.text().strip()):
-                        # Update the dedicated reference column (column 5)
-                        self.table_widget.setItem(row_idx, 5, QTableWidgetItem(reference))
-                        
-                        # Update status to show completed
-                        self.table_widget.setItem(row_idx, 4, QTableWidgetItem("Completed"))
-                        
-                        # Choose appropriate colors based on dark mode
-                        if self.dark_mode:
-                            bg_color = QColor(0, 100, 0)  # Darker green for dark mode
-                        else:
-                            bg_color = QColor(200, 255, 200)  # Light green for light mode
-                        
-                        # Set background color for completed rows with reference
-                        for col in range(self.table_widget.columnCount()):
-                            item = self.table_widget.item(row_idx, col)
-                            if item:
-                                item.setBackground(bg_color)
-                                item.setForeground(QColor(0, 0, 0))  # Black text for better contrast
-                        
-                        # Process any pending UI events to update the table immediately
-                        QApplication.processEvents()
-                        return
+        row_idx = self._table_row_for_payment(row_num)
+        if row_idx is None:
+            self.statusBar.showMessage(f"Could not update reference for payment #{row_num}: row not found")
+            return
+
+        self.table_widget.setItem(row_idx, 5, QTableWidgetItem(reference))
+        self.table_widget.setItem(row_idx, 4, QTableWidgetItem("Completed"))
+        self._apply_row_status_style(row_idx, "Completed")
+        QApplication.processEvents()
     
     def _handle_error(self, error_message):
         # Show error in status bar instead of popup
