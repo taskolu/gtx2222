@@ -319,6 +319,10 @@ class BrowserWorker(QObject):
             page.get_by_role("button", name="Ok").click(timeout=5000)
             self.signals.progress.emit("Clicked PACS Text OK button by role")
         page.wait_for_load_state('networkidle', timeout=15000)
+        validation_errors = page.locator('text=/Business element .* is mandatory|Format error/i')
+        if validation_errors.count() > 0:
+            first_error = validation_errors.first.inner_text(timeout=3000)
+            raise ValueError(f"GTExchange validation error after Text OK: {first_error}")
 
     def _click_pacs_submit_ok(self, page):
         submit_attempts = [
@@ -384,6 +388,7 @@ class BrowserWorker(QObject):
             page.get_by_role("link", name="Messages").click()
             page.wait_for_load_state('networkidle', timeout=20000)
             self._handle_license_popup(page)
+            page.get_by_role("link", name="Create a Message from a").wait_for(timeout=15000)
             return
         except Exception as e:
             self.signals.progress.emit(f"Error clicking Messages link: {e}")
@@ -392,9 +397,9 @@ class BrowserWorker(QObject):
             page.locator('a:has-text("Messages")').first.click()
             page.wait_for_load_state('networkidle', timeout=15000)
             self._handle_license_popup(page)
+            page.get_by_role("link", name="Create a Message from a").wait_for(timeout=15000)
         except Exception as e:
-            self.signals.error.emit(f"Could not navigate to Messages. Please do so manually: {e}")
-            page.wait_for_timeout(8000)
+            raise ValueError(f"Could not navigate to Messages menu: {e}")
 
     def _process_pacs_payment(self, page, payment):
         template_name = payment['template']
@@ -449,9 +454,9 @@ class BrowserWorker(QObject):
             self._click_pacs_submit_ok(page)
             self._confirm_pacs_reference_popup(page, row_num)
 
+            self._return_to_messages(page)
             self.signals.progress.emit(f"Successfully processed PACS payment {row_num}")
             self.signals.progress.emit(f"STATUS:{row_num}:Completed")
-            self._return_to_messages(page)
             return True
         except Exception as e:
             self.signals.progress.emit(f"Error processing PACS payment {row_num}: {e}")
