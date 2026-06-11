@@ -2147,7 +2147,19 @@ class SimplePaymentApp(QMainWindow):
                     background-color: #272c34;
                 }
                 QLabel, QCheckBox {
+                    background-color: transparent;
                     color: #d7dee8;
+                }
+                QCheckBox::indicator {
+                    width: 14px;
+                    height: 14px;
+                    border: 1px solid #667085;
+                    border-radius: 3px;
+                    background-color: #171b21;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #2c8c6a;
+                    border-color: #2c8c6a;
                 }
                 QLineEdit, QTextEdit, QPlainTextEdit {
                     background-color: #171b21;
@@ -2305,7 +2317,22 @@ class SimplePaymentApp(QMainWindow):
                     background-color: #ffffff;
                 }
                 QLabel, QCheckBox {
+                    background-color: transparent;
                     color: #334e68;
+                }
+                QCheckBox::indicator {
+                    width: 14px;
+                    height: 14px;
+                    border: 1px solid #7b8794;
+                    border-radius: 3px;
+                    background-color: #ffffff;
+                }
+                QCheckBox::indicator:hover {
+                    border-color: #2f80b7;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #1f7a4d;
+                    border-color: #1f7a4d;
                 }
                 QLineEdit, QTextEdit, QPlainTextEdit {
                     background-color: #ffffff;
