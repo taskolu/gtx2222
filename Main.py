@@ -244,8 +244,26 @@ class BrowserWorker(QObject):
 
         self.signals.progress.emit(f"Using message id for InstrId/EndToEndId: {message_id}")
         page.get_by_role("textbox", name="(InstrId) Instruction").fill(message_id)
-        page.get_by_role("textbox", name="(EndToEndId) End To End").fill(message_id)
+        end_to_end = page.get_by_role("textbox", name="(EndToEndId) End To End")
+        end_to_end.fill(message_id)
+        end_to_end.press("Tab")
         return message_id
+
+    def _click_pacs_generate(self, page, template_name):
+        first_amount_field_id = get_pacs_first_amount_field_id(template_name)
+        if not first_amount_field_id:
+            raise ValueError(f"Need first amount field id for {template_name}. Please record this template with Playwright codegen.")
+
+        self.signals.progress.emit("Clicking Generate and waiting for PACS amount fields...")
+        try:
+            page.get_by_role("button", name="Generate").click(timeout=10000)
+        except Exception as e:
+            self.signals.progress.emit(f"Generate button role click failed: {e}")
+            page.locator('input[value="Generate"]').click(timeout=10000)
+
+        first_amount = page.locator(f'[id="{first_amount_field_id}"]')
+        first_amount.wait_for(state="visible", timeout=30000)
+        page.wait_for_timeout(1000)
 
     def _fill_pacs_amount(self, page, template_name, formatted_amount):
         first_amount_field_id = get_pacs_first_amount_field_id(template_name)
@@ -390,8 +408,7 @@ class BrowserWorker(QObject):
 
             self._fill_pacs_message_ids(page)
 
-            page.get_by_role("button", name="Generate").click()
-            page.wait_for_load_state('networkidle', timeout=15000)
+            self._click_pacs_generate(page, template_name)
 
             amount_code = payment.get('source_code') or template_name
             self._fill_pacs_amount(page, template_name, format_amount(amount, amount_code))
