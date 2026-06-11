@@ -1,0 +1,28 @@
+import unittest
+from unittest.mock import patch
+
+import browser_launch
+
+
+class BrowserLaunchTests(unittest.TestCase):
+    def test_source_run_uses_installed_edge_when_no_bundled_browser_exists(self):
+        with patch.object(browser_launch.sys, "frozen", False, create=True), \
+                patch("browser_launch.os.path.exists", return_value=False):
+            self.assertEqual(
+                browser_launch.get_browser_launch_options(),
+                {"channel": "msedge", "headless": False},
+            )
+
+    def test_uses_bundled_browser_when_executable_exists(self):
+        def fake_exists(path):
+            return path.endswith("chromium-1179/chrome-win/chrome.exe")
+
+        with patch("browser_launch.os.path.exists", side_effect=fake_exists):
+            options = browser_launch.get_browser_launch_options()
+
+        self.assertEqual(options["headless"], False)
+        self.assertTrue(options["executable_path"].endswith("chromium-1179/chrome-win/chrome.exe"))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -18,6 +18,7 @@ from payment_mapping import (
     is_valid_payment_code,
     resolve_payment_template,
 )
+from browser_launch import get_browser_launch_options
 
 # SpinningIcon class - a QLabel that displays a spinning image
 class SpinningIcon(QLabel):
@@ -111,9 +112,7 @@ class SpinningIcon(QLabel):
 # Set the browser path dynamically
 if getattr(sys, 'frozen', False):
     browser_path = os.path.join(sys._MEIPASS, 'browsers')
-else:
-    browser_path = os.path.join(os.path.dirname(__file__), 'browsers')
-os.environ['PLAYWRIGHT_BROWSERS_PATH'] = browser_path
+    os.environ['PLAYWRIGHT_BROWSERS_PATH'] = browser_path
 
 # Import Playwright - fail gracefully if not installed
 try:
@@ -380,17 +379,12 @@ class BrowserWorker(QObject):
             self.signals.progress.emit("Starting browser automation...")
             
             with sync_playwright() as p:
-                # Get explicit executable path for browser
-                browser_path = os.environ['PLAYWRIGHT_BROWSERS_PATH']
-                executable = os.path.join(browser_path, 'chromium-1148', 'chrome-win', 'chrome.exe')
-                
-                # Check if the executable exists
-                if not os.path.exists(executable):
-                    self.signals.progress.emit(f"Browser executable not found at {executable}, falling back to default")
-                    browser = p.chromium.launch(headless=False)
+                launch_options = get_browser_launch_options()
+                if "executable_path" in launch_options:
+                    self.signals.progress.emit(f"Launching bundled browser: {launch_options['executable_path']}")
                 else:
-                    self.signals.progress.emit(f"Launching browser with executable: {executable}")
-                    browser = p.chromium.launch(executable_path=executable, headless=False)
+                    self.signals.progress.emit("Launching installed Microsoft Edge")
+                browser = p.chromium.launch(**launch_options)
                 
                 context = browser.new_context()
                 page = context.new_page()
