@@ -14,7 +14,7 @@ class BrowserLaunchTests(unittest.TestCase):
 
         self.assertEqual(executable, "browsers/msedge/Application/msedge.exe")
 
-    def test_bundled_edge_uses_persistent_context(self):
+    def test_bundled_edge_uses_cdp_launch(self):
         def fake_exists(path):
             return path.replace("./", "") == "browsers/msedge/Application/msedge.exe"
 
@@ -23,7 +23,7 @@ class BrowserLaunchTests(unittest.TestCase):
                 patch.object(browser_launch.sys, "_MEIPASS", ".", create=True):
             options = browser_launch.get_browser_launch_options()
 
-        self.assertTrue(options["use_persistent_context"])
+        self.assertTrue(options["use_cdp"])
 
     def test_source_run_uses_installed_edge_when_no_bundled_browser_exists(self):
         with patch.object(browser_launch.sys, "frozen", False, create=True), \

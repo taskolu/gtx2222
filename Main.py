@@ -1,6 +1,9 @@
 import sys
 import os
+import socket
 import tempfile
+import time
+import urllib.request
 import pandas as pd
 from datetime import datetime, timedelta
 from PyQt6.QtWidgets import (
@@ -171,6 +174,47 @@ class BrowserWorker(QObject):
         self.payments_data = payments_data
         self.is_running = True
         self.payment_references = {}  # Dictionary to store payment references
+
+    def _find_free_port(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    def _wait_for_cdp(self, endpoint, process, timeout=20):
+        deadline = time.time() + timeout
+        version_url = f"{endpoint}/json/version"
+        while time.time() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError("Bundled Edge exited before remote debugging was ready")
+            try:
+                with urllib.request.urlopen(version_url, timeout=1) as response:
+                    if response.status == 200:
+                        return
+            except Exception:
+                time.sleep(0.25)
+        raise TimeoutError("Timed out waiting for bundled Edge remote debugging")
+
+    def _launch_bundled_edge_over_cdp(self, playwright, launch_options):
+        executable_path = launch_options["executable_path"]
+        user_data_dir = tempfile.mkdtemp(prefix="gtx_playwright_edge_")
+        port = self._find_free_port()
+        endpoint = f"http://127.0.0.1:{port}"
+        args = [
+            executable_path,
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={user_data_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-search-engine-choice-screen",
+            "about:blank",
+        ]
+        self.signals.progress.emit(f"Starting bundled Edge with remote debugging on port {port}")
+        process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self._wait_for_cdp(endpoint, process)
+        browser = playwright.chromium.connect_over_cdp(endpoint)
+        context = browser.contexts[0] if browser.contexts else browser.new_context()
+        page = context.pages[0] if context.pages else context.new_page()
+        return browser, context, page, process
         
     def _handle_license_popup(self, page):
         """Handle the 'License exceeded' popup if it appears"""
@@ -525,12 +569,16 @@ class BrowserWorker(QObject):
             
             with sync_playwright() as p:
                 launch_options = get_browser_launch_options()
+                use_cdp = launch_options.pop("use_cdp", False)
                 use_persistent_context = launch_options.pop("use_persistent_context", False)
+                cdp_process = None
                 if "executable_path" in launch_options:
                     self.signals.progress.emit(f"Launching bundled browser: {launch_options['executable_path']}")
                 else:
                     self.signals.progress.emit("Launching installed Microsoft Edge")
-                if use_persistent_context:
+                if use_cdp:
+                    browser, context, page, cdp_process = self._launch_bundled_edge_over_cdp(p, launch_options)
+                elif use_persistent_context:
                     user_data_dir = tempfile.mkdtemp(prefix="gtx_playwright_edge_")
                     context = p.chromium.launch_persistent_context(user_data_dir, **launch_options)
                     browser = None
@@ -1101,6 +1149,8 @@ class BrowserWorker(QObject):
                 context.close()
                 if browser:
                     browser.close()
+                if cdp_process and cdp_process.poll() is None:
+                    cdp_process.terminate()
                 
                 # Include payment references in the result
                 result = {

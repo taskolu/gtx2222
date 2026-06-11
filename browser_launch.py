@@ -30,7 +30,7 @@ def get_browser_launch_options():
     if bundled_executable:
         options = {"executable_path": bundled_executable, "headless": False}
         if os.path.basename(bundled_executable).lower() == "msedge.exe":
-            options["use_persistent_context"] = True
+            options["use_cdp"] = True
         return options
 
     return {"channel": "msedge", "headless": False}
