@@ -247,15 +247,30 @@ class BrowserWorker(QObject):
         if not first_amount_field_id:
             raise ValueError(f"Need first amount field id for {template_name}. Please record this template with Playwright codegen.")
 
+        self.signals.progress.emit("Waiting for PACS amount fields to finish loading...")
+        page.wait_for_timeout(1500)
+
         self.signals.progress.emit(f"Setting first PACS amount field {first_amount_field_id} to {formatted_amount}")
         first_amount = page.locator(f'[id="{first_amount_field_id}"]')
+        first_amount.wait_for(state="visible", timeout=30000)
         first_amount.click()
         first_amount.fill(formatted_amount)
+        if first_amount.input_value().strip() != formatted_amount:
+            page.wait_for_timeout(1000)
+            first_amount.fill(formatted_amount)
+        if first_amount.input_value().strip() != formatted_amount:
+            raise ValueError(f"First PACS amount field {first_amount_field_id} did not keep value")
 
         self.signals.progress.emit(f"Setting second PACS Value row to {formatted_amount}")
         second_amount = page.get_by_role("row", name="Value", exact=True).get_by_label("Value")
+        second_amount.wait_for(state="visible", timeout=30000)
         second_amount.click()
         second_amount.fill(formatted_amount)
+        if second_amount.input_value().strip() != formatted_amount:
+            page.wait_for_timeout(1000)
+            second_amount.fill(formatted_amount)
+        if second_amount.input_value().strip() != formatted_amount:
+            raise ValueError("Second PACS amount field did not keep value")
 
     def _click_pacs_text_ok(self, page):
         try:
