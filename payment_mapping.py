@@ -30,6 +30,7 @@ LEGACY_TEMPLATE_MAP = {
 }
 
 SKIPPED_CODES = {"EURMALAP", "BOV Platform (EUR)"}
+ZERO_DECIMAL_CODES = {"JPYCUKCIT", "APJPYPACS"}
 
 
 def _normalize_code(code):
@@ -62,12 +63,13 @@ def is_valid_payment_code(code):
     return resolve_payment_template(code) is not None
 
 
-def format_amount(amount):
+def format_amount(amount, code=None):
     cleaned = str(amount).replace("$", "").replace("€", "").replace("£", "").replace(",", "").strip()
-    return f"{round(float(cleaned), 2):.2f}"
+    decimals = 0 if _normalize_code(code) in ZERO_DECIMAL_CODES else 2
+    return f"{round(float(cleaned), decimals):.{decimals}f}"
 
 
 def build_narrative(reference, otr_number):
     base_text = f"Funding {str(reference or 'CO5590').strip()}"
     full_text = f"{base_text} {str(otr_number).strip()}" if otr_number else base_text
-    return "\n".join(full_text[i:i + 35] for i in range(0, min(140, len(full_text)), 35))
+    return full_text[:140]

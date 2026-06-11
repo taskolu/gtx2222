@@ -57,16 +57,19 @@ class PaymentMappingTests(unittest.TestCase):
         self.assertEqual(format_amount("1,936.457"), "1936.46")
         self.assertEqual(format_amount(43622.72), "43622.72")
 
-    def test_builds_four_line_narrative_with_35_character_chunks(self):
+    def test_formats_jpy_amount_without_decimals(self):
+        self.assertEqual(format_amount(660436.0, "JPYCUKCIT"), "660436")
+        self.assertEqual(format_amount("660,436.49", "APJPYPACS"), "660436")
+
+    def test_builds_pacs_narrative_as_single_restricted_line(self):
         narrative = build_narrative(
             "CO5590",
             "OTR6591556,OTR6591649,OTR6591638,OTR6591541,OTR6591573",
         )
 
-        lines = narrative.splitlines()
-        self.assertLessEqual(len(lines), 4)
-        self.assertTrue(all(len(line) <= 35 for line in lines))
-        self.assertTrue(lines[0].startswith("Funding CO5590"))
+        self.assertNotIn("\n", narrative)
+        self.assertLessEqual(len(narrative), 140)
+        self.assertIn("OTR6591649", narrative)
 
 
 if __name__ == "__main__":

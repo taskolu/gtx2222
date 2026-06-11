@@ -241,39 +241,28 @@ class BrowserWorker(QObject):
         page.get_by_role("textbox", name="(EndToEndId) End To End").fill(message_id)
         return message_id
 
+    def _fill_amount_value_after_label(self, page, field_name, formatted_amount):
+        field_row = page.locator(f'xpath=//tr[contains(normalize-space(.), "{field_name}")]').first
+        field_row.wait_for(timeout=15000)
+
+        direct_inputs = field_row.locator('input')
+        if direct_inputs.count() > 0:
+            target = direct_inputs.first
+        else:
+            target = field_row.locator(
+                'xpath=following-sibling::tr[contains(normalize-space(.), "Value") and .//input][1]//input'
+            ).first
+
+        target.click()
+        target.fill(formatted_amount)
+        if target.input_value().strip() != formatted_amount:
+            raise ValueError(f"{field_name} did not keep amount value")
+
     def _fill_pacs_amount(self, page, formatted_amount):
-        self.signals.progress.emit(f"Setting PACS amount to {formatted_amount}")
-        filled = 0
-
-        try:
-            first_value = page.locator('input[id^="rightTreeForm:Value-"]').first
-            first_value.click()
-            first_value.fill(formatted_amount)
-            filled += 1
-        except Exception as e:
-            self.signals.progress.emit(f"Primary PACS amount field failed: {e}")
-
-        try:
-            value_row = page.get_by_role("row", name="Value", exact=True).get_by_label("Value")
-            value_row.click()
-            value_row.fill(formatted_amount)
-            filled += 1
-        except Exception as e:
-            self.signals.progress.emit(f"Secondary PACS amount field failed: {e}")
-
-        if filled < 2:
-            value_inputs = page.locator('input[id^="rightTreeForm:Value-"]')
-            for idx in range(min(value_inputs.count(), 3)):
-                try:
-                    value_inputs.nth(idx).fill(formatted_amount)
-                    filled += 1
-                    if filled >= 2:
-                        break
-                except Exception:
-                    continue
-
-        if filled < 2:
-            raise ValueError("Could not fill both PACS amount fields")
+        self.signals.progress.emit(f"Setting PACS settlement amount to {formatted_amount}")
+        self._fill_amount_value_after_label(page, "IntrBkSttlmAmt", formatted_amount)
+        self.signals.progress.emit(f"Setting PACS instructed amount to {formatted_amount}")
+        self._fill_amount_value_after_label(page, "InstdAmt", formatted_amount)
 
     def _return_to_messages(self, page):
         try:
@@ -327,7 +316,8 @@ class BrowserWorker(QObject):
             page.get_by_role("button", name="Generate").click()
             page.wait_for_load_state('networkidle', timeout=15000)
 
-            self._fill_pacs_amount(page, format_amount(amount))
+            amount_code = payment.get('source_code') or template_name
+            self._fill_pacs_amount(page, format_amount(amount, amount_code))
 
             formatted_date = self.get_formatted_date(template_name)
             self.signals.progress.emit(f"Setting settlement date to {formatted_date}")
