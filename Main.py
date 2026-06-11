@@ -249,21 +249,34 @@ class BrowserWorker(QObject):
         end_to_end.press("Tab")
         return message_id
 
-    def _click_pacs_generate(self, page, template_name):
-        first_amount_field_id = get_pacs_first_amount_field_id(template_name)
-        if not first_amount_field_id:
-            raise ValueError(f"Need first amount field id for {template_name}. Please record this template with Playwright codegen.")
+    def _click_pacs_generate(self, page):
+        uetr_field = page.get_by_role("textbox", name="(UETR) UETR")
+        uetr_field.wait_for(state="visible", timeout=10000)
+        old_uetr = uetr_field.input_value().strip()
 
-        self.signals.progress.emit("Clicking Generate and waiting for PACS amount fields...")
+        self.signals.progress.emit("Clicking Generate and waiting for UETR to change...")
         try:
             page.get_by_role("button", name="Generate").click(timeout=10000)
         except Exception as e:
             self.signals.progress.emit(f"Generate button role click failed: {e}")
             page.locator('input[value="Generate"]').click(timeout=10000)
 
-        first_amount = page.locator(f'[id="{first_amount_field_id}"]')
-        first_amount.wait_for(state="visible", timeout=30000)
-        page.wait_for_timeout(1000)
+        page.wait_for_function(
+            """([label, oldValue]) => {
+                const inputs = Array.from(document.querySelectorAll('input, textarea'));
+                const uetr = inputs.find((input) => {
+                    const aria = input.getAttribute('aria-label') || '';
+                    const title = input.getAttribute('title') || '';
+                    const id = input.getAttribute('id') || '';
+                    return aria.includes(label) || title.includes(label) || id.toLowerCase().includes('uetr');
+                });
+                return uetr && uetr.value && uetr.value.trim() !== oldValue;
+            }""",
+            arg=["UETR", old_uetr],
+            timeout=15000,
+        )
+        new_uetr = uetr_field.input_value().strip()
+        self.signals.progress.emit(f"UETR changed after Generate: {new_uetr}")
 
     def _fill_pacs_amount(self, page, template_name, formatted_amount):
         first_amount_field_id = get_pacs_first_amount_field_id(template_name)
@@ -275,13 +288,13 @@ class BrowserWorker(QObject):
 
         self.signals.progress.emit(f"Setting first PACS amount field {first_amount_field_id} to {formatted_amount}")
         first_amount = page.locator(f'[id="{first_amount_field_id}"]')
-        first_amount.wait_for(state="visible", timeout=30000)
+        first_amount.wait_for(state="visible", timeout=10000)
         first_amount.click()
         first_amount.fill(formatted_amount)
 
         self.signals.progress.emit(f"Setting second PACS Value row to {formatted_amount}")
         second_amount = page.get_by_role("row", name="Value", exact=True).get_by_label("Value")
-        second_amount.wait_for(state="visible", timeout=30000)
+        second_amount.wait_for(state="visible", timeout=10000)
         second_amount.click()
         second_amount.fill(formatted_amount)
 
@@ -408,7 +421,7 @@ class BrowserWorker(QObject):
 
             self._fill_pacs_message_ids(page)
 
-            self._click_pacs_generate(page, template_name)
+            self._click_pacs_generate(page)
 
             amount_code = payment.get('source_code') or template_name
             self._fill_pacs_amount(page, template_name, format_amount(amount, amount_code))
