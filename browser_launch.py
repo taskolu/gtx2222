@@ -4,7 +4,15 @@ import sys
 
 def get_bundled_browser_executable(base_path=None):
     browser_root = base_path or os.path.join(os.path.dirname(__file__), "browsers")
-    for chromium_dir in ("chromium-1179", "chromium-1148"):
+    chromium_dirs = []
+    if os.path.isdir(browser_root):
+        chromium_dirs = sorted(
+            name for name in os.listdir(browser_root)
+            if name.startswith("chromium-")
+        )
+    chromium_dirs.extend(("chromium-1179", "chromium-1148"))
+
+    for chromium_dir in chromium_dirs:
         executable = os.path.join(browser_root, chromium_dir, "chrome-win", "chrome.exe")
         if os.path.exists(executable):
             return executable

@@ -23,6 +23,17 @@ class BrowserLaunchTests(unittest.TestCase):
         self.assertEqual(options["headless"], False)
         self.assertTrue(options["executable_path"].endswith("chromium-1179/chrome-win/chrome.exe"))
 
+    def test_finds_any_bundled_chromium_version(self):
+        with patch("browser_launch.os.path.isdir", return_value=True), \
+                patch("browser_launch.os.listdir", return_value=["chromium-9999"]), \
+                patch("browser_launch.os.path.exists", return_value=True):
+            executable = browser_launch.get_bundled_browser_executable("browsers")
+
+        self.assertEqual(
+            executable,
+            "browsers/chromium-9999/chrome-win/chrome.exe",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
