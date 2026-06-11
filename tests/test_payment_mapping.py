@@ -3,6 +3,7 @@ import unittest
 from payment_mapping import (
     build_narrative,
     format_amount,
+    get_pacs_first_amount_field_id,
     is_valid_payment_code,
     resolve_payment_template,
 )
@@ -60,6 +61,11 @@ class PaymentMappingTests(unittest.TestCase):
     def test_formats_jpy_amount_without_decimals(self):
         self.assertEqual(format_amount(660436.0, "JPYCUKCIT"), "660436")
         self.assertEqual(format_amount("660,436.49", "APJPYPACS"), "660436")
+
+    def test_returns_recorded_first_amount_field_ids(self):
+        self.assertEqual(get_pacs_first_amount_field_id("APAUDPACS"), "rightTreeForm:Value-348")
+        self.assertEqual(get_pacs_first_amount_field_id("APGBPPACS2"), "rightTreeForm:Value-327")
+        self.assertIsNone(get_pacs_first_amount_field_id("APCHFPACS"))
 
     def test_builds_pacs_narrative_as_single_restricted_line(self):
         narrative = build_narrative(

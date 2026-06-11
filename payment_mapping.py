@@ -31,6 +31,10 @@ LEGACY_TEMPLATE_MAP = {
 
 SKIPPED_CODES = {"EURMALAP", "BOV Platform (EUR)"}
 ZERO_DECIMAL_CODES = {"JPYCUKCIT", "APJPYPACS"}
+PACS_FIRST_AMOUNT_FIELD_IDS = {
+    "APAUDPACS": "rightTreeForm:Value-348",
+    "APGBPPACS2": "rightTreeForm:Value-327",
+}
 
 
 def _normalize_code(code):
@@ -61,6 +65,10 @@ def resolve_payment_template(code):
 
 def is_valid_payment_code(code):
     return resolve_payment_template(code) is not None
+
+
+def get_pacs_first_amount_field_id(template):
+    return PACS_FIRST_AMOUNT_FIELD_IDS.get(_normalize_code(template))
 
 
 def format_amount(amount, code=None):
