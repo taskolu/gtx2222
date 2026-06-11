@@ -257,10 +257,42 @@ class BrowserWorker(QObject):
         second_amount.click()
         second_amount.fill(formatted_amount)
 
-    def _confirm_pacs_message(self, page, row_num):
+    def _click_pacs_text_ok(self, page):
+        try:
+            page.locator('#rightTreeForm\\:ok').click(timeout=5000)
+            self.signals.progress.emit("Clicked PACS Text OK button")
+        except Exception as e:
+            self.signals.progress.emit(f"Could not click PACS Text OK by id: {e}")
+            page.get_by_role("button", name="Ok").click(timeout=5000)
+            self.signals.progress.emit("Clicked PACS Text OK button by role")
+        page.wait_for_load_state('networkidle', timeout=15000)
+
+    def _click_pacs_submit_ok(self, page):
+        submit_attempts = [
+            ('#createcriteriaform\\:ok', "PACS final submit OK"),
+            ('input[id="createcriteriaform:ok"]', "PACS final submit OK input"),
+            ("role:button:Ok", "visible final Ok button"),
+        ]
+
+        for selector, description in submit_attempts:
+            try:
+                if selector.startswith("role:button:"):
+                    button_name = selector.split(":", 2)[2]
+                    page.get_by_role("button", name=button_name).last.click(timeout=5000)
+                else:
+                    page.locator(selector).click(timeout=5000)
+                self.signals.progress.emit(f"Clicked {description}")
+                page.wait_for_load_state('networkidle', timeout=15000)
+                return
+            except Exception as e:
+                self.signals.progress.emit(f"Could not click {description}: {e}")
+
+        raise ValueError("Could not click PACS final submit OK button")
+
+    def _confirm_pacs_reference_popup(self, page, row_num):
         payment_ref = ""
         try:
-            page.wait_for_selector('#createcriteriaform\\:popup-generic\\:popup-confirm\\:uftc_confirm_msg_link', timeout=5000)
+            page.wait_for_selector('#createcriteriaform\\:popup-generic\\:popup-confirm\\:uftc_confirm_msg_link', timeout=20000)
             ref_element = page.locator('#createcriteriaform\\:popup-generic\\:popup-confirm\\:uftc_confirm_msg_link')
             payment_ref = ref_element.inner_text().strip()
             if payment_ref:
@@ -268,12 +300,12 @@ class BrowserWorker(QObject):
                 self.payment_references[row_num] = payment_ref
                 self.signals.progress.emit(f"REF:{row_num}:{payment_ref}")
         except Exception as popup_e:
-            self.signals.progress.emit(f"No old-style reference popup found: {popup_e}")
+            self.signals.progress.emit(f"No reference link found in confirmation popup: {popup_e}")
 
         confirm_attempts = [
             ('#createcriteriaform\\:popup-generic\\:popup-confirm\\:confirmAction', "old popup OK"),
-            ("role:button:Ok", "final Ok button"),
-            ("role:button:OK", "final OK button"),
+            ("role:button:Ok", "confirmation Ok button"),
+            ("role:button:OK", "confirmation OK button"),
         ]
 
         for selector, description in confirm_attempts:
@@ -290,7 +322,7 @@ class BrowserWorker(QObject):
             except Exception as click_e:
                 self.signals.progress.emit(f"Could not click {description}: {click_e}")
 
-        raise ValueError("Could not click final confirmation OK button")
+        raise ValueError("Could not click confirmation popup OK button")
 
     def _return_to_messages(self, page):
         try:
@@ -356,12 +388,14 @@ class BrowserWorker(QObject):
             self.signals.progress.emit(f"Setting unstructured remittance to: {narrative_text}")
             page.get_by_role("textbox", name="(Ustrd) Unstructured").click()
             page.get_by_role("textbox", name="(Ustrd) Unstructured").fill(narrative_text)
+            try:
+                page.get_by_role("cell", name=narrative_text, exact=True).click(timeout=3000)
+            except Exception:
+                page.get_by_role("textbox", name="(Ustrd) Unstructured").press("Tab")
 
-            page.get_by_role("button", name="Ok").click()
-            self.signals.progress.emit("Clicked first OK button")
-            page.wait_for_load_state('networkidle', timeout=15000)
-
-            self._confirm_pacs_message(page, row_num)
+            self._click_pacs_text_ok(page)
+            self._click_pacs_submit_ok(page)
+            self._confirm_pacs_reference_popup(page, row_num)
 
             self.signals.progress.emit(f"Successfully processed PACS payment {row_num}")
             self.signals.progress.emit(f"STATUS:{row_num}:Completed")
