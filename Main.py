@@ -6,7 +6,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QGroupBox, QStatusBar, QGridLayout, QCheckBox,
-    QCalendarWidget, QScrollArea, QDialog, QFrame, QStyle, QAbstractItemView
+    QCalendarWidget, QScrollArea, QDialog, QFrame, QStyle, QAbstractItemView,
+    QTextEdit
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QDate, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter
@@ -1181,6 +1182,7 @@ class SimplePaymentApp(QMainWindow):
         self.dark_mode = False
         self.summary_labels = {}
         self.status_spinner = None  # Will hold the status bar spinner
+        self.last_error_message = ""
         
         # Setup UI
         self._setup_ui()
@@ -1233,6 +1235,11 @@ class SimplePaymentApp(QMainWindow):
         self.readme_btn.setObjectName("secondaryButton")
         self.readme_btn.clicked.connect(self._show_instructions)
 
+        self.copy_error_btn = QPushButton("Copy Last Error")
+        self.copy_error_btn.setObjectName("secondaryButton")
+        self.copy_error_btn.clicked.connect(self._copy_last_error)
+        self.copy_error_btn.setEnabled(False)
+
         self.dark_mode_toggle = QPushButton("Dark Mode")
         self.dark_mode_toggle.setObjectName("secondaryButton")
         self.dark_mode_toggle.setCheckable(True)
@@ -1242,6 +1249,7 @@ class SimplePaymentApp(QMainWindow):
         header_layout.addStretch()
         header_layout.addWidget(self.header_status_label)
         header_layout.addWidget(self.readme_btn)
+        header_layout.addWidget(self.copy_error_btn)
         header_layout.addWidget(self.dark_mode_toggle)
         
         # Create compact setup area
@@ -1634,6 +1642,8 @@ class SimplePaymentApp(QMainWindow):
         
         # Update value dates from the table before starting automation
         self._update_value_dates_from_table()
+        self.last_error_message = ""
+        self.copy_error_btn.setEnabled(False)
             
         # Start immediately without confirmation popup
         # Disable inputs during automation
@@ -1759,10 +1769,61 @@ class SimplePaymentApp(QMainWindow):
         QApplication.processEvents()
     
     def _handle_error(self, error_message):
-        # Show error in status bar instead of popup
+        self.last_error_message = error_message
         self.statusBar.showMessage(f"ERROR: {error_message}")
         self.header_status_label.setText("Error")
+        self.copy_error_btn.setEnabled(True)
         self._cleanup_worker()
+        self._show_error_details(error_message)
+
+    def _show_error_details(self, error_message):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Automation Error")
+        dialog.resize(720, 360)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        summary_label = QLabel("Automation failed. Full error details are below.")
+        summary_label.setWordWrap(True)
+        layout.addWidget(summary_label)
+
+        error_text = QTextEdit()
+        error_text.setReadOnly(True)
+        error_text.setPlainText(error_message)
+        error_text.selectAll()
+        layout.addWidget(error_text)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        copy_btn = QPushButton("Copy Error")
+        copy_btn.setObjectName("secondaryButton")
+        copy_btn.clicked.connect(lambda: self._copy_error_text(error_message, copy_btn))
+        button_layout.addWidget(copy_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("secondaryButton")
+        close_btn.clicked.connect(dialog.accept)
+        button_layout.addWidget(close_btn)
+
+        layout.addLayout(button_layout)
+        dialog.exec()
+
+    def _copy_error_text(self, error_message, button=None):
+        QApplication.clipboard().setText(error_message)
+        self.statusBar.showMessage("Error details copied to clipboard")
+        if button:
+            original_text = button.text()
+            button.setText("Copied")
+            QTimer.singleShot(1500, lambda: button.setText(original_text))
+
+    def _copy_last_error(self):
+        if not self.last_error_message:
+            self.statusBar.showMessage("No automation error to copy")
+            return
+        self._copy_error_text(self.last_error_message, self.copy_error_btn)
         
     def _handle_finished(self, result):
         if isinstance(result, dict):

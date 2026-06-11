@@ -4,6 +4,10 @@ import sys
 
 def get_bundled_browser_executable(base_path=None):
     browser_root = base_path or os.path.join(os.path.dirname(__file__), "browsers")
+    edge_executable = os.path.join(browser_root, "msedge", "Application", "msedge.exe")
+    if os.path.exists(edge_executable):
+        return edge_executable
+
     chromium_dirs = []
     if os.path.isdir(browser_root):
         chromium_dirs = sorted(
