@@ -113,7 +113,8 @@ class SpinningIcon(QLabel):
 # Set the browser path dynamically
 if getattr(sys, 'frozen', False):
     browser_path = os.path.join(sys._MEIPASS, 'browsers')
-    os.environ['PLAYWRIGHT_BROWSERS_PATH'] = browser_path
+    if os.path.exists(browser_path):
+        os.environ['PLAYWRIGHT_BROWSERS_PATH'] = browser_path
 
 # Import Playwright - fail gracefully if not installed
 try:
