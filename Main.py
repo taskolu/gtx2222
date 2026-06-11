@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QGroupBox, QStatusBar, QGridLayout, QCheckBox,
-    QCalendarWidget, QScrollArea, QDialog, QFrame, QStyle
+    QCalendarWidget, QScrollArea, QDialog, QFrame, QStyle, QAbstractItemView
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QDate, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter
@@ -1178,6 +1178,7 @@ class SimplePaymentApp(QMainWindow):
         self.worker_thread = None
         self.worker = None
         self.dark_mode = False
+        self.summary_labels = {}
         self.status_spinner = None  # Will hold the status bar spinner
         
         # Setup UI
@@ -1203,52 +1204,77 @@ class SimplePaymentApp(QMainWindow):
     def _setup_ui(self):
         # Main widget and layout
         main_widget = QWidget()
+        main_widget.setObjectName("appRoot")
         self.setCentralWidget(main_widget)
         main_layout = QVBoxLayout(main_widget)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(18, 16, 18, 12)
+        main_layout.setSpacing(12)
+
+        header_frame = QFrame()
+        header_frame.setObjectName("headerFrame")
+        header_layout = QHBoxLayout(header_frame)
+        header_layout.setContentsMargins(16, 12, 16, 12)
+        header_layout.setSpacing(12)
+
+        title_block = QVBoxLayout()
+        title_block.setSpacing(2)
+        title_label = QLabel("GTExchange Payment Automation")
+        title_label.setObjectName("appTitle")
+        subtitle_label = QLabel("Weekly funding entries from Excel to GTExchange")
+        subtitle_label.setObjectName("appSubtitle")
+        title_block.addWidget(title_label)
+        title_block.addWidget(subtitle_label)
+
+        self.header_status_label = QLabel("Ready")
+        self.header_status_label.setObjectName("statusPill")
+
+        self.readme_btn = QPushButton("Read Me")
+        self.readme_btn.setObjectName("secondaryButton")
+        self.readme_btn.clicked.connect(self._show_instructions)
+
+        self.dark_mode_toggle = QPushButton("Dark Mode")
+        self.dark_mode_toggle.setObjectName("secondaryButton")
+        self.dark_mode_toggle.setCheckable(True)
+        self.dark_mode_toggle.clicked.connect(self.toggle_dark_mode)
+
+        header_layout.addLayout(title_block)
+        header_layout.addStretch()
+        header_layout.addWidget(self.header_status_label)
+        header_layout.addWidget(self.readme_btn)
+        header_layout.addWidget(self.dark_mode_toggle)
         
-        # Create login group with vertical layout
+        # Create compact setup area
+        setup_layout = QHBoxLayout()
+        setup_layout.setSpacing(12)
+
         login_group = QGroupBox("Login Details")
         login_layout = QVBoxLayout(login_group)
-        login_layout.setContentsMargins(15, 15, 15, 15)
+        login_layout.setContentsMargins(14, 18, 14, 14)
+        login_layout.setSpacing(9)
         
         # Username field
         username_layout = QHBoxLayout()
         username_label = QLabel("Username:")
-        username_label.setFixedWidth(80)
+        username_label.setFixedWidth(72)
         self.username_input = QLineEdit()
-        self.username_input.setMaximumWidth(130)
         username_layout.addWidget(username_label)
         username_layout.addWidget(self.username_input)
-        username_layout.addStretch()
         
         # Password field
         password_layout = QHBoxLayout()
         password_label = QLabel("Password:")
-        password_label.setFixedWidth(80)
+        password_label.setFixedWidth(72)
         self.password_input = QLineEdit()
-        self.password_input.setMaximumWidth(130)
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         password_layout.addWidget(password_label)
         password_layout.addWidget(self.password_input)
-        password_layout.addStretch()
         
-        # Remember me checkbox and dark mode toggle
+        # Remember me checkbox
         checkbox_layout = QHBoxLayout()
         self.remember_checkbox = QCheckBox("Remember me")
         self.remember_checkbox.setChecked(self._has_saved_credentials())
-        
-        self.readme_btn = QPushButton("📖 Read Me")
-        self.readme_btn.clicked.connect(self._show_instructions)
-        
-        self.dark_mode_toggle = QPushButton("🌙 Dark Mode")
-        self.dark_mode_toggle.setCheckable(True)
-        self.dark_mode_toggle.clicked.connect(self.toggle_dark_mode)
-        
         checkbox_layout.addWidget(self.remember_checkbox)
         checkbox_layout.addStretch()
-        checkbox_layout.addWidget(self.readme_btn)
-        checkbox_layout.addWidget(self.dark_mode_toggle)
         
         login_layout.addLayout(username_layout)
         login_layout.addLayout(password_layout)
@@ -1256,45 +1282,62 @@ class SimplePaymentApp(QMainWindow):
         
         # Excel import group
         excel_group = QGroupBox("Excel Import")
-        excel_layout = QHBoxLayout(excel_group)
-        excel_layout.setContentsMargins(15, 15, 15, 15)  # Add padding inside the group box
+        excel_layout = QVBoxLayout(excel_group)
+        excel_layout.setContentsMargins(14, 18, 14, 14)
+        excel_layout.setSpacing(10)
         
         self.file_path_input = QLineEdit()
         self.file_path_input.setReadOnly(True)
-        self.file_path_input.setPlaceholderText("No file selected")
+        self.file_path_input.setPlaceholderText("Select the weekly funding Excel file")
         excel_layout.addWidget(self.file_path_input)
         
         button_layout = QHBoxLayout()
-        button_layout.setSpacing(8)  # Space between buttons
+        button_layout.setSpacing(8)
+        button_layout.addStretch()
         
         self.browse_btn = QPushButton("Browse")
+        self.browse_btn.setObjectName("secondaryButton")
         self.browse_btn.clicked.connect(self._browse_and_load)
         self.browse_btn.setFixedWidth(80)
-        self.browse_btn.setStyleSheet("QPushButton { padding: 4px; }")
         button_layout.addWidget(self.browse_btn)
         
         self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setObjectName("secondaryButton")
         self.clear_btn.clicked.connect(self._clear_data)
         self.clear_btn.setFixedWidth(80)
-        self.clear_btn.setStyleSheet("QPushButton { padding: 4px; }")
         button_layout.addWidget(self.clear_btn)
         
         excel_layout.addLayout(button_layout)
-        
+
+        setup_layout.addWidget(login_group, 1)
+        setup_layout.addWidget(excel_group, 2)
+
         # Data preview group
         data_group = QGroupBox("Payment Data")
         data_layout = QVBoxLayout(data_group)
-        data_layout.setContentsMargins(15, 15, 15, 15)
-        
-        # Add Copy References button
-        copy_refs_layout = QHBoxLayout()
-        copy_refs_layout.addStretch()
+        data_layout.setContentsMargins(14, 18, 14, 14)
+        data_layout.setSpacing(10)
+
+        table_toolbar_layout = QHBoxLayout()
+        table_toolbar_layout.setSpacing(10)
+        for key, label_text in (
+            ("total", "Total: 0"),
+            ("pending", "Pending: 0"),
+            ("completed", "Completed: 0"),
+            ("errors", "Errors: 0"),
+        ):
+            summary_label = QLabel(label_text)
+            summary_label.setObjectName(f"{key}Summary")
+            table_toolbar_layout.addWidget(summary_label)
+            self.summary_labels[key] = summary_label
+        table_toolbar_layout.addStretch()
+
         self.copy_refs_btn = QPushButton("Copy References")
+        self.copy_refs_btn.setObjectName("secondaryButton")
         self.copy_refs_btn.clicked.connect(self._copy_references)
-        self.copy_refs_btn.setFixedWidth(120)
-        self.copy_refs_btn.setStyleSheet("QPushButton { padding: 4px; }")
-        copy_refs_layout.addWidget(self.copy_refs_btn)
-        data_layout.addLayout(copy_refs_layout)
+        self.copy_refs_btn.setFixedWidth(130)
+        table_toolbar_layout.addWidget(self.copy_refs_btn)
+        data_layout.addLayout(table_toolbar_layout)
         
         self.table_widget = QTableWidget()
         self.table_widget.setColumnCount(7)  # Removed Row# column
@@ -1303,7 +1346,13 @@ class SimplePaymentApp(QMainWindow):
         ])
         self.table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_widget.setAlternatingRowColors(True)
-        self.table_widget.setStyleSheet("QTableWidget { gridline-color: #ccc; }")
+        self.table_widget.verticalHeader().setVisible(False)
+        self.table_widget.setShowGrid(False)
+        self.table_widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_widget.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked
+        )
+        self.table_widget.setWordWrap(False)
         
         # Connect double-click event for Value Date column
         self.table_widget.cellDoubleClicked.connect(self._show_calendar)
@@ -1312,23 +1361,9 @@ class SimplePaymentApp(QMainWindow):
         
         # Start button with better styling
         self.start_btn = QPushButton("Start Automation")
+        self.start_btn.setObjectName("primaryButton")
         self.start_btn.clicked.connect(self._start_automation)
         self.start_btn.setEnabled(False)
-        self.start_btn.setStyleSheet("""
-            QPushButton {
-                padding: 8px;
-                font-weight: bold;
-                background-color: #4CAF50;
-                color: white;
-                border-radius: 4px;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
         self.start_btn.setMinimumHeight(36)  # Make button taller
         
         # Create start button layout with spinner icon
@@ -1340,14 +1375,13 @@ class SimplePaymentApp(QMainWindow):
         start_btn_layout.setAlignment(self.start_spinner, Qt.AlignmentFlag.AlignVCenter)
         
         # Add widgets to main layout
-        main_layout.addWidget(login_group)
-        main_layout.addWidget(excel_group)
+        main_layout.addWidget(header_frame)
+        main_layout.addLayout(setup_layout)
         main_layout.addWidget(data_group)
         main_layout.addLayout(start_btn_layout)
         
         # Status bar with better styling
         self.statusBar = QStatusBar()
-        self.statusBar.setStyleSheet("QStatusBar { padding: 3px; font-size: 11px; }")
         self.setStatusBar(self.statusBar)
         
         # Create status bar spinner and add it to status bar
@@ -1355,6 +1389,7 @@ class SimplePaymentApp(QMainWindow):
         self.status_spinner.setVisible(False)
         self.statusBar.addPermanentWidget(self.status_spinner)
         self.statusBar.showMessage("Ready")
+        self._update_summary()
         
         # Load saved credentials if available
         self._load_credentials()
@@ -1415,6 +1450,8 @@ class SimplePaymentApp(QMainWindow):
         if missing_columns:
             missing_str = ", ".join(missing_columns)
             self.statusBar.showMessage(f"Error: Missing columns: {missing_str}")
+            self.header_status_label.setText("Import error")
+            self._update_summary()
             return
             
         # Find the actual column names using normalized lookup
@@ -1521,6 +1558,7 @@ class SimplePaymentApp(QMainWindow):
                 date_item = QTableWidgetItem(value_date)
                 date_item.setFlags(date_item.flags() | Qt.ItemFlag.ItemIsEditable)
                 self.table_widget.setItem(table_row, 6, date_item)
+                self.table_widget.setRowHeight(table_row, 30)
                 
                 row_index += 1
                 
@@ -1530,10 +1568,13 @@ class SimplePaymentApp(QMainWindow):
         # Update status
         if self.payments_data:
             self.statusBar.showMessage(f"Loaded {len(self.payments_data)} payments")
+            self.header_status_label.setText(f"{len(self.payments_data)} loaded")
             self.start_btn.setEnabled(True)
         else:
             self.statusBar.showMessage("No valid payments found in file")
+            self.header_status_label.setText("No valid payments")
             self.start_btn.setEnabled(False)
+        self._update_summary()
     
     def _get_default_value_date(self, template_name):
         """Calculate the default value date based on template rules and skip weekends"""
@@ -1569,6 +1610,8 @@ class SimplePaymentApp(QMainWindow):
         self.payments_data = []
         self.start_btn.setEnabled(False)
         self.statusBar.showMessage("Data cleared")
+        self.header_status_label.setText("Ready")
+        self._update_summary()
     
     def _start_automation(self):
         if not self.payments_data:
@@ -1605,6 +1648,7 @@ class SimplePaymentApp(QMainWindow):
         self.start_spinner.start_spinning()
         self.status_spinner.setVisible(True)
         self.status_spinner.start_spinning()
+        self.header_status_label.setText("Running")
         
         # Create and start worker thread
         self.worker = BrowserWorker(username, password, "", self.payments_data)
@@ -1660,6 +1704,8 @@ class SimplePaymentApp(QMainWindow):
             
         # Regular progress message
         self.statusBar.showMessage(message)
+        if hasattr(self, "header_status_label"):
+            self.header_status_label.setText("Running" if self.worker else "Ready")
         QApplication.processEvents()  # Process UI events to update immediately
     
     def _table_row_for_payment(self, row_num):
@@ -1670,11 +1716,11 @@ class SimplePaymentApp(QMainWindow):
 
     def _apply_row_status_style(self, row_idx, status):
         if status == "Completed":
-            bg_color = QColor(0, 100, 0) if self.dark_mode else QColor(200, 255, 200)
-            text_color = QColor(0, 0, 0)
+            bg_color = QColor(24, 84, 58) if self.dark_mode else QColor(222, 247, 232)
+            text_color = QColor(235, 255, 244) if self.dark_mode else QColor(18, 83, 48)
         elif status == "Error":
-            bg_color = QColor(100, 0, 0) if self.dark_mode else QColor(255, 200, 200)
-            text_color = QColor(255, 255, 255) if self.dark_mode else QColor(0, 0, 0)
+            bg_color = QColor(112, 42, 48) if self.dark_mode else QColor(255, 226, 226)
+            text_color = QColor(255, 241, 241) if self.dark_mode else QColor(126, 30, 30)
         else:
             return
 
@@ -1693,6 +1739,7 @@ class SimplePaymentApp(QMainWindow):
 
         self.table_widget.setItem(row_idx, 4, QTableWidgetItem(status))
         self._apply_row_status_style(row_idx, status)
+        self._update_summary()
         QApplication.processEvents()
     
     def _update_payment_reference(self, row_num, reference):
@@ -1707,11 +1754,13 @@ class SimplePaymentApp(QMainWindow):
         self.table_widget.setItem(row_idx, 5, QTableWidgetItem(reference))
         self.table_widget.setItem(row_idx, 4, QTableWidgetItem("Completed"))
         self._apply_row_status_style(row_idx, "Completed")
+        self._update_summary()
         QApplication.processEvents()
     
     def _handle_error(self, error_message):
         # Show error in status bar instead of popup
         self.statusBar.showMessage(f"ERROR: {error_message}")
+        self.header_status_label.setText("Error")
         self._cleanup_worker()
         
     def _handle_finished(self, result):
@@ -1727,10 +1776,13 @@ class SimplePaymentApp(QMainWindow):
                 status_message = message
             
             self.statusBar.showMessage(status_message)
+            self.header_status_label.setText("Completed")
         else:
             self.statusBar.showMessage("Automation completed")
+            self.header_status_label.setText("Completed")
             
         self._cleanup_worker()
+        self._update_summary()
         
     def _cleanup_worker(self):
         # Stop spinners
@@ -1753,6 +1805,32 @@ class SimplePaymentApp(QMainWindow):
             self.worker_thread.wait()
         self.worker_thread = None
         self.worker = None
+
+    def _update_summary(self):
+        if not hasattr(self, "summary_labels"):
+            return
+
+        counts = {"total": self.table_widget.rowCount(), "pending": 0, "completed": 0, "errors": 0}
+        for row in range(self.table_widget.rowCount()):
+            status_item = self.table_widget.item(row, 4)
+            status = status_item.text().strip().lower() if status_item else ""
+            if status == "completed":
+                counts["completed"] += 1
+            elif status == "error":
+                counts["errors"] += 1
+            else:
+                counts["pending"] += 1
+
+        labels = {
+            "total": f"Total: {counts['total']}",
+            "pending": f"Pending: {counts['pending']}",
+            "completed": f"Completed: {counts['completed']}",
+            "errors": f"Errors: {counts['errors']}",
+        }
+        for key, text in labels.items():
+            label = self.summary_labels.get(key)
+            if label:
+                label.setText(text)
         
     def show_message(self, title, message, icon=QMessageBox.Icon.Information):
         msg_box = QMessageBox(self)
@@ -2011,125 +2089,324 @@ class SimplePaymentApp(QMainWindow):
     def apply_style(self):
         if self.dark_mode:
             self.setStyleSheet("""
-                /* Main application */
-                QMainWindow, QWidget, QDialog { background-color: #2D2D30; color: #E1E1E1; }
-                
-                /* Group boxes */
-                QGroupBox { 
-                    border: 1px solid #3F3F46; 
-                    border-radius: 5px; 
-                    margin-top: 1em; 
-                    font-weight: bold; 
-                    background-color: #252526; 
+                QMainWindow, QWidget, QDialog {
+                    background-color: #1f2329;
+                    color: #e6edf3;
+                    font-size: 12px;
                 }
-                QGroupBox::title { 
-                    subcontrol-origin: margin; 
-                    left: 10px; 
-                    padding: 0 3px; 
-                    background-color: #252526; 
+                QWidget#appRoot {
+                    background-color: #1f2329;
                 }
-                
-                /* Input elements */
-                QLineEdit, QTextEdit, QPlainTextEdit { 
-                    background-color: #1E1E1E; 
-                    color: #E1E1E1; 
-                    border: 1px solid #3F3F46; 
-                    selection-background-color: #264F78;
-                    selection-color: #FFFFFF;
+                QFrame#headerFrame {
+                    background-color: #272c34;
+                    border: 1px solid #3a414c;
+                    border-radius: 8px;
                 }
-                
-                /* Buttons */
-                QPushButton { 
-                    background-color: #0E639C; 
-                    color: white; 
-                    border: none; 
-                    padding: 5px; 
-                    border-radius: 3px; 
+                QLabel#appTitle {
+                    color: #f4f7fb;
+                    font-size: 18px;
+                    font-weight: 700;
                 }
-                QPushButton:hover { background-color: #1177BB; }
-                QPushButton:pressed { background-color: #0D5889; }
-                QPushButton:disabled { background-color: #333333; color: #666666; }
-                
-                /* QTableWidget styling */
-                QTableWidget { 
-                    background-color: #1E1E1E; 
-                    alternate-background-color: #252526; 
-                    gridline-color: #3F3F46; 
-                    selection-background-color: #264F78;
-                    selection-color: #FFFFFF;
-                    border: 1px solid #3F3F46;
+                QLabel#appSubtitle {
+                    color: #9aa8b7;
                 }
-                QTableWidget::item:selected { 
-                    background-color: #264F78;
-                    color: #FFFFFF;
+                QLabel#statusPill,
+                QLabel#totalSummary,
+                QLabel#pendingSummary,
+                QLabel#completedSummary,
+                QLabel#errorsSummary {
+                    padding: 5px 9px;
+                    border-radius: 4px;
+                    font-weight: 600;
+                    background-color: #303743;
+                    color: #d5dde8;
+                    border: 1px solid #444d5a;
                 }
-                
-                /* Fix for table corner */
-                QTableCornerButton::section { 
-                    background-color: #333333; 
-                    border: 1px solid #3F3F46;
+                QLabel#completedSummary {
+                    background-color: #163d2b;
+                    color: #bdf2cf;
+                    border-color: #245a3e;
                 }
-                
-                /* Headers */
-                QHeaderView { background-color: #252526; }
-                QHeaderView::section { 
-                    background-color: #333333; 
-                    color: #E1E1E1; 
-                    padding: 4px;
-                    border: 1px solid #3F3F46;
+                QLabel#errorsSummary {
+                    background-color: #4a2428;
+                    color: #ffc6c6;
+                    border-color: #693238;
                 }
-                
-                /* StatusBar */
-                QStatusBar { background-color: #007ACC; color: white; }
-                
-                /* Checkbox */
-                QCheckBox { color: #E1E1E1; }
-                QCheckBox::indicator { 
-                    width: 13px; 
-                    height: 13px; 
-                    border: 1px solid #5F5F5F;
-                    background-color: #1E1E1E;
+                QGroupBox {
+                    background-color: #272c34;
+                    border: 1px solid #3a414c;
+                    border-radius: 8px;
+                    margin-top: 10px;
+                    font-weight: 700;
                 }
-                QCheckBox::indicator:checked { 
-                    background-color: #0E639C; 
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 12px;
+                    padding: 0 5px;
+                    color: #cbd5e1;
+                    background-color: #272c34;
                 }
-                
-                /* Scrollbars */
-                QScrollBar:vertical {
+                QLabel, QCheckBox {
+                    color: #d7dee8;
+                }
+                QLineEdit, QTextEdit, QPlainTextEdit {
+                    background-color: #171b21;
+                    color: #edf2f7;
+                    border: 1px solid #404853;
+                    border-radius: 5px;
+                    padding: 6px 8px;
+                    selection-background-color: #2c6f9f;
+                }
+                QLineEdit:read-only {
+                    color: #aeb8c5;
+                    background-color: #20252d;
+                }
+                QPushButton {
+                    border: 1px solid #4b5563;
+                    border-radius: 5px;
+                    padding: 7px 12px;
+                    font-weight: 600;
+                    background-color: #303743;
+                    color: #edf2f7;
+                }
+                QPushButton:hover {
+                    background-color: #3a4350;
+                }
+                QPushButton:pressed {
+                    background-color: #252b34;
+                }
+                QPushButton:disabled {
+                    background-color: #242932;
+                    color: #6b7280;
+                    border-color: #343b46;
+                }
+                QPushButton#primaryButton {
+                    background-color: #13795b;
+                    border-color: #13795b;
+                    color: white;
+                    font-size: 13px;
+                    padding: 9px 14px;
+                }
+                QPushButton#primaryButton:hover {
+                    background-color: #16966f;
+                }
+                QPushButton#primaryButton:disabled {
+                    background-color: #313844;
+                    border-color: #3b4450;
+                    color: #8c96a3;
+                }
+                QTableWidget {
+                    background-color: #20252d;
+                    alternate-background-color: #252b34;
+                    border: 1px solid #3a414c;
+                    border-radius: 6px;
+                    gridline-color: #303743;
+                    selection-background-color: #315a75;
+                    selection-color: #ffffff;
+                }
+                QTableWidget::item {
+                    padding: 5px;
+                    border-bottom: 1px solid #303743;
+                }
+                QHeaderView::section {
+                    background-color: #303743;
+                    color: #dce5ef;
+                    padding: 7px 6px;
                     border: none;
-                    background: #1E1E1E;
-                    width: 10px;
+                    border-right: 1px solid #424b58;
+                    font-weight: 700;
+                }
+                QStatusBar {
+                    background-color: #272c34;
+                    color: #cdd7e3;
+                    border-top: 1px solid #3a414c;
+                    padding: 3px;
+                }
+                QScrollBar:vertical, QScrollBar:horizontal {
+                    background: #20252d;
+                    border: none;
                     margin: 0px;
                 }
-                QScrollBar::handle:vertical {
-                    background: #3F3F46;
-                    min-height: 20px;
+                QScrollBar:vertical { width: 10px; }
+                QScrollBar:horizontal { height: 10px; }
+                QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+                    background: #4b5563;
                     border-radius: 5px;
+                    min-height: 24px;
+                    min-width: 24px;
                 }
-                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                    height: 0px;
-                }
-                QScrollBar:horizontal {
-                    border: none;
-                    background: #1E1E1E;
-                    height: 10px;
-                    margin: 0px;
-                }
-                QScrollBar::handle:horizontal {
-                    background: #3F3F46;
-                    min-width: 20px;
-                    border-radius: 5px;
-                }
-                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                QScrollBar::add-line, QScrollBar::sub-line {
                     width: 0px;
+                    height: 0px;
                 }
             """)
         else:
-            self.setStyleSheet("")  # Reset to default style
+            self.setStyleSheet("""
+                QMainWindow, QWidget, QDialog {
+                    background-color: #f4f6f8;
+                    color: #1f2933;
+                    font-size: 12px;
+                }
+                QWidget#appRoot {
+                    background-color: #f4f6f8;
+                }
+                QFrame#headerFrame {
+                    background-color: #ffffff;
+                    border: 1px solid #d9e2ec;
+                    border-radius: 8px;
+                }
+                QLabel#appTitle {
+                    color: #102a43;
+                    font-size: 18px;
+                    font-weight: 700;
+                }
+                QLabel#appSubtitle {
+                    color: #627d98;
+                }
+                QLabel#statusPill,
+                QLabel#totalSummary,
+                QLabel#pendingSummary,
+                QLabel#completedSummary,
+                QLabel#errorsSummary {
+                    padding: 5px 9px;
+                    border-radius: 4px;
+                    font-weight: 600;
+                    background-color: #eef2f6;
+                    color: #334e68;
+                    border: 1px solid #d9e2ec;
+                }
+                QLabel#pendingSummary {
+                    background-color: #fff8e6;
+                    color: #8a5a00;
+                    border-color: #f0d89a;
+                }
+                QLabel#completedSummary {
+                    background-color: #e3f8e9;
+                    color: #125330;
+                    border-color: #b7e4c7;
+                }
+                QLabel#errorsSummary {
+                    background-color: #ffe7e7;
+                    color: #7e1e1e;
+                    border-color: #ffc9c9;
+                }
+                QGroupBox {
+                    background-color: #ffffff;
+                    border: 1px solid #d9e2ec;
+                    border-radius: 8px;
+                    margin-top: 10px;
+                    font-weight: 700;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 12px;
+                    padding: 0 5px;
+                    color: #334e68;
+                    background-color: #ffffff;
+                }
+                QLabel, QCheckBox {
+                    color: #334e68;
+                }
+                QLineEdit, QTextEdit, QPlainTextEdit {
+                    background-color: #ffffff;
+                    color: #1f2933;
+                    border: 1px solid #bcccdc;
+                    border-radius: 5px;
+                    padding: 6px 8px;
+                    selection-background-color: #2f80b7;
+                    selection-color: white;
+                }
+                QLineEdit:focus {
+                    border-color: #2f80b7;
+                }
+                QLineEdit:read-only {
+                    color: #52606d;
+                    background-color: #f8fafc;
+                }
+                QPushButton {
+                    border: 1px solid #bcccdc;
+                    border-radius: 5px;
+                    padding: 7px 12px;
+                    font-weight: 600;
+                    background-color: #ffffff;
+                    color: #243b53;
+                }
+                QPushButton:hover {
+                    background-color: #f0f4f8;
+                    border-color: #9fb3c8;
+                }
+                QPushButton:pressed {
+                    background-color: #d9e2ec;
+                }
+                QPushButton:disabled {
+                    background-color: #edf1f5;
+                    color: #9aa5b1;
+                    border-color: #d9e2ec;
+                }
+                QPushButton#primaryButton {
+                    background-color: #1f7a4d;
+                    border-color: #1f7a4d;
+                    color: white;
+                    font-size: 13px;
+                    padding: 9px 14px;
+                }
+                QPushButton#primaryButton:hover {
+                    background-color: #24935d;
+                }
+                QPushButton#primaryButton:disabled {
+                    background-color: #d9e2ec;
+                    border-color: #d9e2ec;
+                    color: #8a98a8;
+                }
+                QTableWidget {
+                    background-color: #ffffff;
+                    alternate-background-color: #f8fafc;
+                    border: 1px solid #d9e2ec;
+                    border-radius: 6px;
+                    gridline-color: #edf2f7;
+                    selection-background-color: #d7ecfa;
+                    selection-color: #102a43;
+                }
+                QTableWidget::item {
+                    padding: 5px;
+                    border-bottom: 1px solid #edf2f7;
+                }
+                QHeaderView::section {
+                    background-color: #edf2f7;
+                    color: #334e68;
+                    padding: 7px 6px;
+                    border: none;
+                    border-right: 1px solid #d9e2ec;
+                    font-weight: 700;
+                }
+                QStatusBar {
+                    background-color: #ffffff;
+                    color: #52606d;
+                    border-top: 1px solid #d9e2ec;
+                    padding: 3px;
+                }
+                QScrollBar:vertical, QScrollBar:horizontal {
+                    background: #f4f6f8;
+                    border: none;
+                    margin: 0px;
+                }
+                QScrollBar:vertical { width: 10px; }
+                QScrollBar:horizontal { height: 10px; }
+                QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+                    background: #bcccdc;
+                    border-radius: 5px;
+                    min-height: 24px;
+                    min-width: 24px;
+                }
+                QScrollBar::add-line, QScrollBar::sub-line {
+                    width: 0px;
+                    height: 0px;
+                }
+            """)
 
     def toggle_dark_mode(self):
         self.dark_mode = not self.dark_mode
-        self.dark_mode_toggle.setText("☀️ Light Mode" if self.dark_mode else "🌙 Dark Mode")
+        self.dark_mode_toggle.setText("Light Mode" if self.dark_mode else "Dark Mode")
         self.apply_style()
 
     def _show_instructions(self):
