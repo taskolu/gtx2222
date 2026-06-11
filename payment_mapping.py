@@ -33,6 +33,7 @@ SKIPPED_CODES = {"EURMALAP", "BOV Platform (EUR)"}
 ZERO_DECIMAL_CODES = {"JPYCUKCIT", "APJPYPACS"}
 PACS_FIRST_AMOUNT_FIELD_IDS = {
     "APAUDPACS": "rightTreeForm:Value-348",
+    "APCHFPACS": "rightTreeForm:Value-327",
     "APGBPPACS2": "rightTreeForm:Value-327",
 }
 
