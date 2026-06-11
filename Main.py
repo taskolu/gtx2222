@@ -310,6 +310,48 @@ class BrowserWorker(QObject):
         date_field.click(timeout=10000)
         date_field.fill(formatted_date)
 
+    def _fill_pacs_narrative(self, page, narrative_text):
+        self.signals.progress.emit(f"Setting unstructured remittance to: {narrative_text}")
+        page.get_by_role("textbox", name="(Ustrd) Unstructured").click()
+        page.get_by_role("textbox", name="(Ustrd) Unstructured").fill(narrative_text)
+        try:
+            page.get_by_role("cell", name=narrative_text, exact=True).click(timeout=3000)
+        except Exception:
+            page.get_by_role("textbox", name="(Ustrd) Unstructured").press("Tab")
+
+    def _ensure_textbox_value(self, page, label, expected_value):
+        field = page.get_by_role("textbox", name=label)
+        field.wait_for(state="visible", timeout=10000)
+        actual_value = field.input_value().strip()
+        if actual_value != expected_value:
+            self.signals.progress.emit(f"Repairing {label}: expected {expected_value}, found {actual_value}")
+            field.click()
+            field.fill(expected_value)
+            actual_value = field.input_value().strip()
+        if actual_value != expected_value:
+            raise ValueError(f"{label} did not keep expected value")
+
+    def _ensure_pacs_amounts(self, page, formatted_amount):
+        for field_id in get_pacs_amount_field_ids():
+            field = page.locator(f'[id="{field_id}"]')
+            field.wait_for(state="visible", timeout=10000)
+            actual_value = field.input_value().strip()
+            if actual_value != formatted_amount:
+                self.signals.progress.emit(f"Repairing PACS amount field {field_id}: expected {formatted_amount}, found {actual_value}")
+                field.click()
+                field.fill(formatted_amount)
+                actual_value = field.input_value().strip()
+            if actual_value != formatted_amount:
+                raise ValueError(f"PACS amount field {field_id} did not keep expected value")
+
+    def _ensure_pacs_text_values(self, page, message_id, formatted_amount, formatted_date, narrative_text):
+        self.signals.progress.emit("Verifying PACS fields after Generate...")
+        self._ensure_textbox_value(page, "(InstrId) Instruction", message_id)
+        self._ensure_textbox_value(page, "(EndToEndId) End To End", message_id)
+        self._ensure_pacs_amounts(page, formatted_amount)
+        self._ensure_textbox_value(page, "(IntrBkSttlmDt) Interbank", formatted_date)
+        self._ensure_textbox_value(page, "(Ustrd) Unstructured", narrative_text)
+
     def _click_pacs_text_ok(self, page):
         try:
             page.locator('#rightTreeForm\\:ok').click(timeout=5000)
@@ -430,25 +472,21 @@ class BrowserWorker(QObject):
                 page.locator('a:has-text("Empty message Text")').first.click()
             page.wait_for_load_state('networkidle', timeout=15000)
 
-            self._fill_pacs_message_ids(page)
-
-            self._click_pacs_generate(page)
+            message_id = self._fill_pacs_message_ids(page)
 
             amount_code = payment.get('source_code') or template_name
-            self._fill_pacs_amount(page, template_name, format_amount(amount, amount_code))
+            formatted_amount = format_amount(amount, amount_code)
+            self._fill_pacs_amount(page, template_name, formatted_amount)
 
             formatted_date = self.get_formatted_date(template_name)
             self.signals.progress.emit(f"Setting settlement date to {formatted_date}")
             self._fill_pacs_date(page, formatted_date)
 
             narrative_text = build_narrative(payment.get('reference', 'CO5590'), otr_number)
-            self.signals.progress.emit(f"Setting unstructured remittance to: {narrative_text}")
-            page.get_by_role("textbox", name="(Ustrd) Unstructured").click()
-            page.get_by_role("textbox", name="(Ustrd) Unstructured").fill(narrative_text)
-            try:
-                page.get_by_role("cell", name=narrative_text, exact=True).click(timeout=3000)
-            except Exception:
-                page.get_by_role("textbox", name="(Ustrd) Unstructured").press("Tab")
+            self._fill_pacs_narrative(page, narrative_text)
+
+            self._click_pacs_generate(page)
+            self._ensure_pacs_text_values(page, message_id, formatted_amount, formatted_date, narrative_text)
 
             self._click_pacs_text_ok(page)
             self._click_pacs_submit_ok(page)
