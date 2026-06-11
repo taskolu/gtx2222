@@ -15,7 +15,7 @@ import subprocess
 from payment_mapping import (
     build_narrative,
     format_amount,
-    get_pacs_first_amount_field_id,
+    get_pacs_amount_field_ids,
     is_valid_payment_code,
     resolve_payment_template,
 )
@@ -279,24 +279,30 @@ class BrowserWorker(QObject):
         self.signals.progress.emit(f"UETR changed after Generate: {new_uetr}")
 
     def _fill_pacs_amount(self, page, template_name, formatted_amount):
-        first_amount_field_id = get_pacs_first_amount_field_id(template_name)
-        if not first_amount_field_id:
-            raise ValueError(f"Need first amount field id for {template_name}. Please record this template with Playwright codegen.")
-
         self.signals.progress.emit("Waiting for PACS amount fields to finish loading...")
         page.wait_for_timeout(1000)
 
-        self.signals.progress.emit(f"Setting first PACS amount field {first_amount_field_id} to {formatted_amount}")
-        first_amount = page.locator(f'[id="{first_amount_field_id}"]')
-        first_amount.wait_for(state="visible", timeout=10000)
-        first_amount.click()
-        first_amount.fill(formatted_amount)
+        filled = 0
+        for field_id in get_pacs_amount_field_ids():
+            try:
+                self.signals.progress.emit(f"Setting PACS amount field {field_id} to {formatted_amount}")
+                amount_field = page.locator(f'[id="{field_id}"]')
+                amount_field.wait_for(state="visible", timeout=5000)
+                amount_field.click()
+                amount_field.fill(formatted_amount)
+                filled += 1
+            except Exception as e:
+                self.signals.progress.emit(f"Could not fill PACS amount field {field_id}: {e}")
 
-        self.signals.progress.emit(f"Setting second PACS Value row to {formatted_amount}")
-        second_amount = page.get_by_role("row", name="Value", exact=True).get_by_label("Value")
-        second_amount.wait_for(state="visible", timeout=10000)
-        second_amount.click()
-        second_amount.fill(formatted_amount)
+        if filled < 2:
+            self.signals.progress.emit(f"Using row Value fallback for PACS amount {formatted_amount}")
+            second_amount = page.get_by_role("row", name="Value", exact=True).get_by_label("Value")
+            second_amount.click(timeout=5000)
+            second_amount.fill(formatted_amount)
+            filled += 1
+
+        if filled < 2:
+            raise ValueError(f"Could not fill both PACS amount fields for {template_name}")
 
     def _fill_pacs_date(self, page, formatted_date):
         self.signals.progress.emit(f"Clicking PACS date field and setting {formatted_date}")
