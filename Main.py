@@ -257,6 +257,41 @@ class BrowserWorker(QObject):
         second_amount.click()
         second_amount.fill(formatted_amount)
 
+    def _confirm_pacs_message(self, page, row_num):
+        payment_ref = ""
+        try:
+            page.wait_for_selector('#createcriteriaform\\:popup-generic\\:popup-confirm\\:uftc_confirm_msg_link', timeout=5000)
+            ref_element = page.locator('#createcriteriaform\\:popup-generic\\:popup-confirm\\:uftc_confirm_msg_link')
+            payment_ref = ref_element.inner_text().strip()
+            if payment_ref:
+                self.signals.progress.emit(f"Extracted payment reference: {payment_ref}")
+                self.payment_references[row_num] = payment_ref
+                self.signals.progress.emit(f"REF:{row_num}:{payment_ref}")
+        except Exception as popup_e:
+            self.signals.progress.emit(f"No old-style reference popup found: {popup_e}")
+
+        confirm_attempts = [
+            ('#createcriteriaform\\:popup-generic\\:popup-confirm\\:confirmAction', "old popup OK"),
+            ("role:button:Ok", "final Ok button"),
+            ("role:button:OK", "final OK button"),
+        ]
+
+        for selector, description in confirm_attempts:
+            try:
+                if selector.startswith("role:button:"):
+                    button_name = selector.split(":", 2)[2]
+                    page.get_by_role("button", name=button_name).last.click(timeout=5000)
+                else:
+                    page.locator(selector).click(timeout=5000)
+                self.signals.progress.emit(f"Clicked {description}")
+                page.wait_for_load_state('networkidle', timeout=15000)
+                self._handle_license_popup(page)
+                return payment_ref
+            except Exception as click_e:
+                self.signals.progress.emit(f"Could not click {description}: {click_e}")
+
+        raise ValueError("Could not click final confirmation OK button")
+
     def _return_to_messages(self, page):
         try:
             self.signals.progress.emit("Returning to Messages menu...")
@@ -326,23 +361,7 @@ class BrowserWorker(QObject):
             self.signals.progress.emit("Clicked first OK button")
             page.wait_for_load_state('networkidle', timeout=15000)
 
-            try:
-                self.signals.progress.emit("Waiting for confirmation popup...")
-                page.wait_for_selector('#createcriteriaform\\:popup-generic\\:popup-confirm\\:uftc_confirm_msg_link', timeout=20000)
-                ref_element = page.locator('#createcriteriaform\\:popup-generic\\:popup-confirm\\:uftc_confirm_msg_link')
-                payment_ref = ref_element.inner_text()
-                self.signals.progress.emit(f"Extracted payment reference: {payment_ref}")
-                self.payment_references[row_num] = payment_ref
-                self.signals.progress.emit(f"REF:{row_num}:{payment_ref}")
-                page.locator('#createcriteriaform\\:popup-generic\\:popup-confirm\\:confirmAction').click()
-                page.wait_for_load_state('networkidle', timeout=15000)
-            except Exception as popup_e:
-                self.signals.progress.emit(f"Could not capture popup reference: {popup_e}")
-                try:
-                    page.locator('#createcriteriaform\\:popup-generic\\:popup-confirm\\:confirmAction').click()
-                    page.wait_for_load_state('networkidle', timeout=15000)
-                except Exception:
-                    pass
+            self._confirm_pacs_message(page, row_num)
 
             self.signals.progress.emit(f"Successfully processed PACS payment {row_num}")
             self.signals.progress.emit(f"STATUS:{row_num}:Completed")
