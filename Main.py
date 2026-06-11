@@ -277,6 +277,20 @@ class BrowserWorker(QObject):
         if second_amount.input_value().strip() != formatted_amount:
             raise ValueError("Second PACS amount field did not keep value")
 
+    def _fill_pacs_date(self, page, formatted_date):
+        self.signals.progress.emit("Waiting for PACS date field to be ready...")
+        page.wait_for_timeout(1000)
+        date_field = page.get_by_role("textbox", name="(IntrBkSttlmDt) Interbank")
+        date_field.wait_for(state="visible", timeout=30000)
+        date_field.click()
+        date_field.fill(formatted_date)
+        if date_field.input_value().strip() != formatted_date:
+            page.wait_for_timeout(1000)
+            date_field.click()
+            date_field.fill(formatted_date)
+        if date_field.input_value().strip() != formatted_date:
+            raise ValueError("PACS settlement date field did not keep value")
+
     def _click_pacs_text_ok(self, page):
         try:
             page.locator('#rightTreeForm\\:ok').click(timeout=5000)
@@ -402,8 +416,7 @@ class BrowserWorker(QObject):
 
             formatted_date = self.get_formatted_date(template_name)
             self.signals.progress.emit(f"Setting settlement date to {formatted_date}")
-            page.get_by_role("textbox", name="(IntrBkSttlmDt) Interbank").click()
-            page.get_by_role("textbox", name="(IntrBkSttlmDt) Interbank").fill(formatted_date)
+            self._fill_pacs_date(page, formatted_date)
 
             narrative_text = build_narrative(payment.get('reference', 'CO5590'), otr_number)
             self.signals.progress.emit(f"Setting unstructured remittance to: {narrative_text}")
