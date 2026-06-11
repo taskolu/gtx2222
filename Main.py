@@ -212,7 +212,7 @@ class BrowserWorker(QObject):
 
         raise ValueError("Could not find correspondent identifier in template table")
 
-    def _wait_for_jsf_settle(self, page, reason, delay_ms=1500):
+    def _wait_for_jsf_settle(self, page, reason, delay_ms=1000):
         self.signals.progress.emit(f"Waiting for GTExchange refresh after {reason}...")
         page.wait_for_load_state('networkidle', timeout=15000)
         page.wait_for_timeout(delay_ms)
@@ -253,7 +253,7 @@ class BrowserWorker(QObject):
             raise ValueError(f"Need first amount field id for {template_name}. Please record this template with Playwright codegen.")
 
         self.signals.progress.emit("Waiting for PACS amount fields to finish loading...")
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(1000)
 
         self.signals.progress.emit(f"Setting first PACS amount field {first_amount_field_id} to {formatted_amount}")
         first_amount = page.locator(f'[id="{first_amount_field_id}"]')
