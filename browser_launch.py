@@ -28,6 +28,9 @@ def get_browser_launch_options():
         os.path.join(sys._MEIPASS, "browsers") if getattr(sys, "frozen", False) else None
     )
     if bundled_executable:
-        return {"executable_path": bundled_executable, "headless": False}
+        options = {"executable_path": bundled_executable, "headless": False}
+        if os.path.basename(bundled_executable).lower() == "msedge.exe":
+            options["use_persistent_context"] = True
+        return options
 
     return {"channel": "msedge", "headless": False}

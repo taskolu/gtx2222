@@ -1,5 +1,6 @@
 import sys
 import os
+import tempfile
 import pandas as pd
 from datetime import datetime, timedelta
 from PyQt6.QtWidgets import (
@@ -524,14 +525,20 @@ class BrowserWorker(QObject):
             
             with sync_playwright() as p:
                 launch_options = get_browser_launch_options()
+                use_persistent_context = launch_options.pop("use_persistent_context", False)
                 if "executable_path" in launch_options:
                     self.signals.progress.emit(f"Launching bundled browser: {launch_options['executable_path']}")
                 else:
                     self.signals.progress.emit("Launching installed Microsoft Edge")
-                browser = p.chromium.launch(**launch_options)
-                
-                context = browser.new_context()
-                page = context.new_page()
+                if use_persistent_context:
+                    user_data_dir = tempfile.mkdtemp(prefix="gtx_playwright_edge_")
+                    context = p.chromium.launch_persistent_context(user_data_dir, **launch_options)
+                    browser = None
+                    page = context.pages[0] if context.pages else context.new_page()
+                else:
+                    browser = p.chromium.launch(**launch_options)
+                    context = browser.new_context()
+                    page = context.new_page()
                 
                 # Login process - follows the exact Playwright example flow
                 self.signals.progress.emit("Navigating to login page...")
@@ -1092,7 +1099,8 @@ class BrowserWorker(QObject):
                 
                 # Close browser at the end
                 context.close()
-                browser.close()
+                if browser:
+                    browser.close()
                 
                 # Include payment references in the result
                 result = {
