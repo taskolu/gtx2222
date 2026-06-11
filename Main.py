@@ -331,17 +331,28 @@ class BrowserWorker(QObject):
         if actual_value != expected_value:
             raise ValueError(f"{label} did not keep expected value")
 
+    def _normalize_display_amount(self, value):
+        return str(value or "").replace(" ", "").replace(",", "").strip()
+
+    def _amount_values_match(self, actual_value, expected_value):
+        actual_normalized = self._normalize_display_amount(actual_value)
+        expected_normalized = self._normalize_display_amount(expected_value)
+        try:
+            return float(actual_normalized) == float(expected_normalized)
+        except ValueError:
+            return actual_normalized == expected_normalized
+
     def _ensure_pacs_amounts(self, page, formatted_amount):
         for field_id in get_pacs_amount_field_ids():
             field = page.locator(f'[id="{field_id}"]')
             field.wait_for(state="visible", timeout=10000)
             actual_value = field.input_value().strip()
-            if actual_value != formatted_amount:
+            if not self._amount_values_match(actual_value, formatted_amount):
                 self.signals.progress.emit(f"Repairing PACS amount field {field_id}: expected {formatted_amount}, found {actual_value}")
                 field.click()
                 field.fill(formatted_amount)
                 actual_value = field.input_value().strip()
-            if actual_value != formatted_amount:
+            if not self._amount_values_match(actual_value, formatted_amount):
                 raise ValueError(f"PACS amount field {field_id} did not keep expected value")
 
     def _ensure_pacs_text_values(self, page, message_id, formatted_amount, formatted_date, narrative_text):
