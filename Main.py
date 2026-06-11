@@ -570,7 +570,8 @@ class BrowserWorker(QObject):
                                 page.locator('a:has-text("Create a Message from a Template")').click()
                                 page.wait_for_load_state('networkidle', timeout=15000) # Increased from 10000
                             except:
-                                self.signals.error.emit("Could not navigate to template creation")
+                                self.signals.progress.emit(f"STATUS:{row_num}:Error")
+                                self.signals.error.emit(f"Could not navigate to template creation for {template_name}")
                                 continue  # Skip to next payment
                         
                         # Set creating unit (CCT_CHUK or TGBP) based on template
@@ -620,6 +621,7 @@ class BrowserWorker(QObject):
                                 page.get_by_role("button", name="Search").click()
                                 page.wait_for_load_state('networkidle', timeout=15000) # Increased from 10000
                             except:
+                                self.signals.progress.emit(f"STATUS:{row_num}:Error")
                                 self.signals.error.emit(f"Failed to search for template: {template_name}")
                                 continue  # Skip to next payment
                         
@@ -661,6 +663,7 @@ class BrowserWorker(QObject):
                                 page.locator(f'a:has-text("{template_name}")').first.click()
                                 page.wait_for_load_state('networkidle', timeout=15000) # Increased from 10000
                             except:
+                                self.signals.progress.emit(f"STATUS:{row_num}:Error")
                                 self.signals.error.emit(f"Could not select template {template_name}")
                                 continue  # Skip to next payment
 
