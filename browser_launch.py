@@ -1,5 +1,20 @@
 import os
 import sys
+import time
+import urllib.request
+
+
+def wait_for_cdp_endpoint(endpoint, process=None, timeout=20, urlopen=urllib.request.urlopen, sleep=time.sleep):
+    deadline = time.time() + timeout
+    version_url = f"{endpoint}/json/version"
+    while time.time() < deadline:
+        try:
+            with urlopen(version_url, timeout=1) as response:
+                if response.status == 200:
+                    return
+        except Exception:
+            sleep(0.25)
+    raise TimeoutError("Timed out waiting for bundled Edge remote debugging")
 
 
 def get_bundled_browser_executable(base_path=None):

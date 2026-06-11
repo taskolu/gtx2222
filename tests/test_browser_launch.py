@@ -5,6 +5,28 @@ import browser_launch
 
 
 class BrowserLaunchTests(unittest.TestCase):
+    def test_wait_for_cdp_allows_parent_process_to_exit(self):
+        class FakeProcess:
+            def poll(self):
+                return 0
+
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+        browser_launch.wait_for_cdp_endpoint(
+            "http://127.0.0.1:9222",
+            FakeProcess(),
+            timeout=1,
+            urlopen=lambda url, timeout: FakeResponse(),
+            sleep=lambda seconds: None,
+        )
+
     def test_uses_bundled_edge_application_when_available(self):
         def fake_exists(path):
             return path == "browsers/msedge/Application/msedge.exe"

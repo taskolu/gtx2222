@@ -2,8 +2,6 @@ import sys
 import os
 import socket
 import tempfile
-import time
-import urllib.request
 import pandas as pd
 from datetime import datetime, timedelta
 from PyQt6.QtWidgets import (
@@ -24,7 +22,7 @@ from payment_mapping import (
     is_valid_payment_code,
     resolve_payment_template,
 )
-from browser_launch import get_browser_launch_options
+from browser_launch import get_browser_launch_options, wait_for_cdp_endpoint
 
 # SpinningIcon class - a QLabel that displays a spinning image
 class SpinningIcon(QLabel):
@@ -180,20 +178,6 @@ class BrowserWorker(QObject):
             sock.bind(("127.0.0.1", 0))
             return sock.getsockname()[1]
 
-    def _wait_for_cdp(self, endpoint, process, timeout=20):
-        deadline = time.time() + timeout
-        version_url = f"{endpoint}/json/version"
-        while time.time() < deadline:
-            if process.poll() is not None:
-                raise RuntimeError("Bundled Edge exited before remote debugging was ready")
-            try:
-                with urllib.request.urlopen(version_url, timeout=1) as response:
-                    if response.status == 200:
-                        return
-            except Exception:
-                time.sleep(0.25)
-        raise TimeoutError("Timed out waiting for bundled Edge remote debugging")
-
     def _launch_bundled_edge_over_cdp(self, playwright, launch_options):
         executable_path = launch_options["executable_path"]
         user_data_dir = tempfile.mkdtemp(prefix="gtx_playwright_edge_")
@@ -210,7 +194,7 @@ class BrowserWorker(QObject):
         ]
         self.signals.progress.emit(f"Starting bundled Edge with remote debugging on port {port}")
         process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self._wait_for_cdp(endpoint, process)
+        wait_for_cdp_endpoint(endpoint, process)
         browser = playwright.chromium.connect_over_cdp(endpoint)
         context = browser.contexts[0] if browser.contexts else browser.new_context()
         page = context.pages[0] if context.pages else context.new_page()
