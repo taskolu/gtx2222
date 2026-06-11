@@ -212,18 +212,23 @@ class BrowserWorker(QObject):
 
         raise ValueError("Could not find correspondent identifier in template table")
 
+    def _wait_for_jsf_settle(self, page, reason, delay_ms=1500):
+        self.signals.progress.emit(f"Waiting for GTExchange refresh after {reason}...")
+        page.wait_for_load_state('networkidle', timeout=15000)
+        page.wait_for_timeout(delay_ms)
+
     def _set_owning_unit(self, page, unit):
         try:
             self.signals.progress.emit(f"Setting owning unit to {unit}")
             page.get_by_label("Owning Unit").select_option(unit)
-            page.wait_for_load_state('networkidle', timeout=15000)
+            self._wait_for_jsf_settle(page, "owning unit change")
         except Exception as e:
             self.signals.progress.emit(f"Error setting owning unit: {e}")
             try:
                 selects = page.locator('select').all()
                 if len(selects) > 1:
                     selects[1].select_option(unit)
-                    page.wait_for_load_state('networkidle', timeout=15000)
+                    self._wait_for_jsf_settle(page, "owning unit fallback change")
             except Exception as fallback_e:
                 self.signals.progress.emit(f"Owning unit fallback failed: {fallback_e}")
 
@@ -378,7 +383,8 @@ class BrowserWorker(QObject):
             page.get_by_title("Correspondent identifier,").click()
             page.get_by_title("Correspondent identifier,").fill(correspondent_id)
             page.get_by_role("button", name="Add/Replace").click()
-            page.wait_for_load_state('networkidle', timeout=15000)
+            self._wait_for_jsf_settle(page, "Add/Replace")
+            page.get_by_role("link", name="Empty message Text").wait_for(timeout=30000)
 
             try:
                 page.get_by_role("link", name="Empty message Text").click()
