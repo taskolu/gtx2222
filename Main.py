@@ -260,36 +260,18 @@ class BrowserWorker(QObject):
         first_amount.wait_for(state="visible", timeout=30000)
         first_amount.click()
         first_amount.fill(formatted_amount)
-        if first_amount.input_value().strip() != formatted_amount:
-            page.wait_for_timeout(1000)
-            first_amount.fill(formatted_amount)
-        if first_amount.input_value().strip() != formatted_amount:
-            raise ValueError(f"First PACS amount field {first_amount_field_id} did not keep value")
 
         self.signals.progress.emit(f"Setting second PACS Value row to {formatted_amount}")
         second_amount = page.get_by_role("row", name="Value", exact=True).get_by_label("Value")
         second_amount.wait_for(state="visible", timeout=30000)
         second_amount.click()
         second_amount.fill(formatted_amount)
-        if second_amount.input_value().strip() != formatted_amount:
-            page.wait_for_timeout(1000)
-            second_amount.fill(formatted_amount)
-        if second_amount.input_value().strip() != formatted_amount:
-            raise ValueError("Second PACS amount field did not keep value")
 
     def _fill_pacs_date(self, page, formatted_date):
-        self.signals.progress.emit("Waiting for PACS date field to be ready...")
-        page.wait_for_timeout(1000)
+        self.signals.progress.emit(f"Clicking PACS date field and setting {formatted_date}")
         date_field = page.get_by_role("textbox", name="(IntrBkSttlmDt) Interbank")
-        date_field.wait_for(state="visible", timeout=30000)
-        date_field.click()
+        date_field.click(timeout=10000)
         date_field.fill(formatted_date)
-        if date_field.input_value().strip() != formatted_date:
-            page.wait_for_timeout(1000)
-            date_field.click()
-            date_field.fill(formatted_date)
-        if date_field.input_value().strip() != formatted_date:
-            raise ValueError("PACS settlement date field did not keep value")
 
     def _click_pacs_text_ok(self, page):
         try:
