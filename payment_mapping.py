@@ -1,0 +1,73 @@
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class PaymentTemplate:
+    source_code: str
+    template: str
+    unit: str
+    uses_pacs_flow: bool = True
+
+
+PACS_TEMPLATE_MAP = {
+    "AUDCUKBOA": PaymentTemplate("AUDCUKBOA", "APAUDPACS", "TGBP"),
+    "CHFCUKCSB": PaymentTemplate("CHFCUKCSB", "APCHFPACS", "TGBP"),
+    "EURCHKING": PaymentTemplate("EURCHKING", "EURPMTAP2PACS", "CCT_CHUK"),
+    "HKDCUKBOA": PaymentTemplate("HKDCUKBOA", "APHKDPACS", "TGBP"),
+    "JPYCUKCIT": PaymentTemplate("JPYCUKCIT", "APJPYPACS", "CCT_CHUK"),
+    "GBPCHBARX": PaymentTemplate("GBPCHBARX", "APGBPPACS", "CCT_CHUK"),
+    "GBPCVBAROPS": PaymentTemplate("GBPCVBAROPS", "APGBPPACS2", "CCT_CHUK"),
+    "USDBNYCHKINC": PaymentTemplate("USDBNYCHKINC", "APUSDPACS", "CCT_CHUK"),
+    "CADCHKRBC": PaymentTemplate("CADCHKRBC", "APCADPACS", "CCT_CHUK"),
+    "CADBMOIN": PaymentTemplate("CADBMOIN", "APCADPACS", "CCT_CHUK"),
+    "NZDCUKCIT": PaymentTemplate("NZDCUKCIT", "APNZDPACS", "CCT_CHUK"),
+    "SGDCHKBNY": PaymentTemplate("SGDCHKBNY", "APSGDPACS", "CCT_CHUK"),
+    "PLNCUKING": PaymentTemplate("PLNCUKING", "APPLNPACS", "CCT_CHUK"),
+}
+
+LEGACY_TEMPLATE_MAP = {
+    "CZKCUKKOM": PaymentTemplate("CZKCUKKOM", "APFUNDINGCZK", "CCT_CHUK", uses_pacs_flow=False),
+}
+
+SKIPPED_CODES = {"EURMALAP", "BOV Platform (EUR)"}
+
+
+def _normalize_code(code):
+    return str(code or "").strip()
+
+
+def resolve_payment_template(code):
+    normalized = _normalize_code(code)
+    if not normalized or normalized in SKIPPED_CODES:
+        return None
+
+    if normalized in PACS_TEMPLATE_MAP:
+        return PACS_TEMPLATE_MAP[normalized]
+
+    if normalized in LEGACY_TEMPLATE_MAP:
+        return LEGACY_TEMPLATE_MAP[normalized]
+
+    for template in PACS_TEMPLATE_MAP.values():
+        if normalized == template.template:
+            return template
+
+    for template in LEGACY_TEMPLATE_MAP.values():
+        if normalized == template.template:
+            return template
+
+    return None
+
+
+def is_valid_payment_code(code):
+    return resolve_payment_template(code) is not None
+
+
+def format_amount(amount):
+    cleaned = str(amount).replace("$", "").replace("€", "").replace("£", "").replace(",", "").strip()
+    return f"{round(float(cleaned), 2):.2f}"
+
+
+def build_narrative(reference, otr_number):
+    base_text = f"Funding {str(reference or 'CO5590').strip()}"
+    full_text = f"{base_text} {str(otr_number).strip()}" if otr_number else base_text
+    return "\n".join(full_text[i:i + 35] for i in range(0, min(140, len(full_text)), 35))

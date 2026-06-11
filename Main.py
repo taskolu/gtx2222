@@ -12,6 +12,12 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QDate, QPoint, QRect,
 from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter
 import re
 import subprocess
+from payment_mapping import (
+    build_narrative,
+    format_amount,
+    is_valid_payment_code,
+    resolve_payment_template,
+)
 
 # SpinningIcon class - a QLabel that displays a spinning image
 class SpinningIcon(QLabel):
@@ -173,6 +179,197 @@ class BrowserWorker(QObject):
         except:
             pass
         return False
+
+    def _click_create_message(self, page):
+        try:
+            page.get_by_role("button", name="Create Message").click()
+            page.wait_for_load_state('networkidle', timeout=15000)
+            return True
+        except Exception as e:
+            self.signals.progress.emit(f"Error clicking Create Message: {e}")
+            try:
+                page.locator('input[value="Create Message"]').click()
+                page.wait_for_load_state('networkidle', timeout=15000)
+                return True
+            except Exception as fallback_e:
+                self.signals.progress.emit(f"Create Message fallback failed: {fallback_e}")
+                return False
+
+    def _capture_correspondent_identifier(self, page):
+        table = page.locator("#rightTree_table_FinInstnId-36")
+        table.wait_for(timeout=15000)
+        cell_texts = table.get_by_role("cell").all_inner_texts()
+
+        for text in cell_texts:
+            candidate = text.strip()
+            if re.fullmatch(r"[A-Z0-9]{8}([A-Z0-9]{3})?", candidate):
+                try:
+                    table.get_by_role("cell", name=candidate).first.click()
+                except Exception:
+                    table.get_by_text(candidate).first.click()
+                self.signals.progress.emit(f"Captured correspondent identifier: {candidate}")
+                return candidate
+
+        raise ValueError("Could not find correspondent identifier in template table")
+
+    def _set_owning_unit(self, page, unit):
+        try:
+            self.signals.progress.emit(f"Setting owning unit to {unit}")
+            page.get_by_label("Owning Unit").select_option(unit)
+            page.wait_for_load_state('networkidle', timeout=15000)
+        except Exception as e:
+            self.signals.progress.emit(f"Error setting owning unit: {e}")
+            try:
+                selects = page.locator('select').all()
+                if len(selects) > 1:
+                    selects[1].select_option(unit)
+                    page.wait_for_load_state('networkidle', timeout=15000)
+            except Exception as fallback_e:
+                self.signals.progress.emit(f"Owning unit fallback failed: {fallback_e}")
+
+    def _fill_pacs_message_ids(self, page):
+        msg_id = page.get_by_role("textbox", name="(MsgId) Message Identification")
+        msg_id.wait_for(timeout=15000)
+        message_id = msg_id.input_value().strip()
+        if not message_id:
+            page.wait_for_timeout(1000)
+            message_id = msg_id.input_value().strip()
+        if not message_id:
+            raise ValueError("Message Identification is empty")
+
+        self.signals.progress.emit(f"Using message id for InstrId/EndToEndId: {message_id}")
+        page.get_by_role("textbox", name="(InstrId) Instruction").fill(message_id)
+        page.get_by_role("textbox", name="(EndToEndId) End To End").fill(message_id)
+        return message_id
+
+    def _fill_pacs_amount(self, page, formatted_amount):
+        self.signals.progress.emit(f"Setting PACS amount to {formatted_amount}")
+        filled = 0
+
+        try:
+            first_value = page.locator('input[id^="rightTreeForm:Value-"]').first
+            first_value.click()
+            first_value.fill(formatted_amount)
+            filled += 1
+        except Exception as e:
+            self.signals.progress.emit(f"Primary PACS amount field failed: {e}")
+
+        try:
+            value_row = page.get_by_role("row", name="Value", exact=True).get_by_label("Value")
+            value_row.click()
+            value_row.fill(formatted_amount)
+            filled += 1
+        except Exception as e:
+            self.signals.progress.emit(f"Secondary PACS amount field failed: {e}")
+
+        if filled < 2:
+            value_inputs = page.locator('input[id^="rightTreeForm:Value-"]')
+            for idx in range(min(value_inputs.count(), 3)):
+                try:
+                    value_inputs.nth(idx).fill(formatted_amount)
+                    filled += 1
+                    if filled >= 2:
+                        break
+                except Exception:
+                    continue
+
+        if filled < 2:
+            raise ValueError("Could not fill both PACS amount fields")
+
+    def _return_to_messages(self, page):
+        try:
+            self.signals.progress.emit("Returning to Messages menu...")
+            page.wait_for_load_state('networkidle', timeout=15000)
+            page.get_by_role("link", name="Messages").click()
+            page.wait_for_load_state('networkidle', timeout=20000)
+            self._handle_license_popup(page)
+            return
+        except Exception as e:
+            self.signals.progress.emit(f"Error clicking Messages link: {e}")
+
+        try:
+            page.locator('a:has-text("Messages")').first.click()
+            page.wait_for_load_state('networkidle', timeout=15000)
+            self._handle_license_popup(page)
+        except Exception as e:
+            self.signals.error.emit(f"Could not navigate to Messages. Please do so manually: {e}")
+            page.wait_for_timeout(8000)
+
+    def _process_pacs_payment(self, page, payment):
+        template_name = payment['template']
+        amount = payment['amount']
+        otr_number = payment['otr_number']
+        unit = payment['unit']
+        row_num = payment['row_num']
+
+        try:
+            correspondent_id = self._capture_correspondent_identifier(page)
+
+            if not self._click_create_message(page):
+                raise ValueError("Could not create PACS message")
+            self._handle_license_popup(page)
+
+            self._set_owning_unit(page, unit)
+
+            self.signals.progress.emit(f"Setting correspondent identifier to {correspondent_id}")
+            page.get_by_title("Correspondent identifier,").click()
+            page.get_by_title("Correspondent identifier,").fill(correspondent_id)
+            page.get_by_role("button", name="Add/Replace").click()
+            page.wait_for_load_state('networkidle', timeout=15000)
+
+            try:
+                page.get_by_role("link", name="Empty message Text").click()
+            except Exception:
+                page.locator('a:has-text("Empty message Text")').first.click()
+            page.wait_for_load_state('networkidle', timeout=15000)
+
+            self._fill_pacs_message_ids(page)
+
+            page.get_by_role("button", name="Generate").click()
+            page.wait_for_load_state('networkidle', timeout=15000)
+
+            self._fill_pacs_amount(page, format_amount(amount))
+
+            formatted_date = self.get_formatted_date(template_name)
+            self.signals.progress.emit(f"Setting settlement date to {formatted_date}")
+            page.get_by_role("textbox", name="(IntrBkSttlmDt) Interbank").click()
+            page.get_by_role("textbox", name="(IntrBkSttlmDt) Interbank").fill(formatted_date)
+
+            narrative_text = build_narrative(payment.get('reference', 'CO5590'), otr_number)
+            self.signals.progress.emit(f"Setting unstructured remittance to: {narrative_text}")
+            page.get_by_role("textbox", name="(Ustrd) Unstructured").click()
+            page.get_by_role("textbox", name="(Ustrd) Unstructured").fill(narrative_text)
+
+            page.get_by_role("button", name="Ok").click()
+            self.signals.progress.emit("Clicked first OK button")
+            page.wait_for_load_state('networkidle', timeout=15000)
+
+            try:
+                self.signals.progress.emit("Waiting for confirmation popup...")
+                page.wait_for_selector('#createcriteriaform\\:popup-generic\\:popup-confirm\\:uftc_confirm_msg_link', timeout=20000)
+                ref_element = page.locator('#createcriteriaform\\:popup-generic\\:popup-confirm\\:uftc_confirm_msg_link')
+                payment_ref = ref_element.inner_text()
+                self.signals.progress.emit(f"Extracted payment reference: {payment_ref}")
+                self.payment_references[row_num] = payment_ref
+                self.signals.progress.emit(f"REF:{row_num}:{payment_ref}")
+                page.locator('#createcriteriaform\\:popup-generic\\:popup-confirm\\:confirmAction').click()
+                page.wait_for_load_state('networkidle', timeout=15000)
+            except Exception as popup_e:
+                self.signals.progress.emit(f"Could not capture popup reference: {popup_e}")
+                try:
+                    page.locator('#createcriteriaform\\:popup-generic\\:popup-confirm\\:confirmAction').click()
+                    page.wait_for_load_state('networkidle', timeout=15000)
+                except Exception:
+                    pass
+
+            self.signals.progress.emit(f"Successfully processed PACS payment {row_num}")
+            self.signals.progress.emit(f"STATUS:{row_num}:Completed")
+            self._return_to_messages(page)
+            return True
+        except Exception as e:
+            self.signals.progress.emit(f"Error processing PACS payment {row_num}: {e}")
+            self.signals.progress.emit(f"STATUS:{row_num}:Error")
+            return False
     
     def run(self):
         if not PLAYWRIGHT_AVAILABLE:
@@ -271,33 +468,9 @@ class BrowserWorker(QObject):
                         otr_number = payment['otr_number'] 
                         unit = payment['unit']
                         row_num = payment['row_num']
+                        uses_pacs_flow = payment.get('uses_pacs_flow', True)
                         
                         self.signals.progress.emit(f"Processing {template_name} for amount {amount}")
-                        
-                        # Skip BOV Platform entries and EURMALAP entries
-                        if template_name == 'BOV Platform (EUR)' or template_name == 'EURMALAP':
-                            continue
-                        
-                        # Skip rows with NaN template values
-                            continue
-                        # Skip rows that don't match any valid template or code
-                        valid_templates = [
-                            'APFUNDINGAUD', 'AUDCUKBOA', 'APFUNDINGCHF', 'CHFCUKCSB',
-                            'EURPAYMENTAP2', 'EURCHKING', 'APFUNDINGHKD', 'HKDCUKBOA',
-                            'APFUNDINGJPY', 'JPYCUKCIT', 'APFUNDINGGBP', 'GBPCHBARX',
-                            'APFUNDINGGBP2', 'GBPCVBAROPS', 'APFUNDINGUSD', 'USDBNYCHKINC',
-                            'APFUNDINGCAD', 'CADCHKRBC', 'CADBMOIN', # Added CADBMOIN here
-                            'APFUNDINGNZD', 'NZDCUKCIT',
-                            'APFUNDINGSGD', 'SGDCHKBNY', 'APFUNDINGCZK', 'CZKCUKKOM',
-                            'APFUNDINGPLN', 'PLNCUKING'
-                        ]
-                        if template_name not in valid_templates:
-                            continue
-                        
-                        # Convert code to template name if needed
-                        # If the value is a code (e.g., AUDCUKBOA), convert it to template name (e.g., APFUNDINGAUD)
-                        if template_name in TEMPLATE_CODE_MAP and template_name not in TEMPLATE_TO_UNIT:
-                            template_name = TEMPLATE_CODE_MAP[template_name]
                         
                         # Click on Create a Message from a Template
                         try:
@@ -403,6 +576,13 @@ class BrowserWorker(QObject):
                             except:
                                 self.signals.error.emit(f"Could not select template {template_name}")
                                 continue  # Skip to next payment
+
+                        if uses_pacs_flow:
+                            if self._process_pacs_payment(page, payment):
+                                processed += 1
+                            else:
+                                errors += 1
+                            continue
                         
                         # Create message
                         try:
@@ -801,7 +981,10 @@ class BrowserWorker(QObject):
         next_day_templates = [
             "APFUNDINGAUD", "APFUNDINGCHF", "APFUNDINGCZK", "APFUNDINGGBP",
             "APFUNDINGGBP2", "APFUNDINGHKD", "APFUNDINGJPY", "APFUNDINGNZD",
-            "APFUNDINGPLN", "APFUNDINGSGD", "EURPAYMENTAP2"
+            "APFUNDINGPLN", "APFUNDINGSGD", "EURPAYMENTAP2",
+            "APAUDPACS", "APCHFPACS", "APGBPPACS", "APGBPPACS2",
+            "APHKDPACS", "APJPYPACS", "APNZDPACS", "APPLNPACS",
+            "APSGDPACS", "EURPMTAP2PACS"
         ]
         
         if template_name in next_day_templates:
@@ -1120,6 +1303,12 @@ class SimplePaymentApp(QMainWindow):
                     break
             if otr_col:
                 break
+
+        reference_col = None
+        for col in normalized_columns.keys():
+            if col == 'reference':
+                reference_col = normalized_columns[col]
+                break
         
         # Process rows
         row_index = 1
@@ -1132,49 +1321,30 @@ class SimplePaymentApp(QMainWindow):
                 if not template:
                     continue
                     
-                # Skip BOV Platform entries and EURMALAP entries
-                if template == 'BOV Platform (EUR)' or template == 'EURMALAP':
-                    continue
-                    
                 # Skip rows with NaN template values
                 if pd.isna(row[template_col]):
                     continue
-                    
-                # Skip rows that don't match any valid template or code
-                valid_templates = [
-                    'APFUNDINGAUD', 'AUDCUKBOA', 'APFUNDINGCHF', 'CHFCUKCSB',
-                    'EURPAYMENTAP2', 'EURCHKING', 'APFUNDINGHKD', 'HKDCUKBOA',
-                    'APFUNDINGJPY', 'JPYCUKCIT', 'APFUNDINGGBP', 'GBPCHBARX',
-                    'APFUNDINGGBP2', 'GBPCVBAROPS', 'APFUNDINGUSD', 'USDBNYCHKINC',
-                    'APFUNDINGCAD', 'CADCHKRBC', 'CADBMOIN', # Added CADBMOIN here
-                    'APFUNDINGNZD', 'NZDCUKCIT',
-                    'APFUNDINGSGD', 'SGDCHKBNY', 'APFUNDINGCZK', 'CZKCUKKOM',
-                    'APFUNDINGPLN', 'PLNCUKING'
-                ]
-                if template not in valid_templates:
+
+                resolved_template = resolve_payment_template(template)
+                if not resolved_template or not is_valid_payment_code(template):
                     continue
                     
                 # Get amount
-                amount_str = str(row[amount_col]).replace('$', '').replace('€', '').replace('£', '').strip()
                 try:
                     # Parse the amount and ensure exactly 2 decimal places
-                    amount = round(float(amount_str.replace(',', '')), 2)
+                    amount = float(format_amount(row[amount_col]))
                 except:
                     continue  # Skip invalid amounts
                     
                 if amount <= 0:
                     continue
                 
-                # Convert code to template name if needed
-                # If the value is a code (e.g., AUDCUKBOA), convert it to template name (e.g., APFUNDINGAUD)
-                if template in TEMPLATE_CODE_MAP and template not in TEMPLATE_TO_UNIT:
-                    template = TEMPLATE_CODE_MAP[template]
-                    
                 # Get OTR number
                 otr = str(row[otr_col]).strip() if not pd.isna(row[otr_col]) else ""
+                reference = str(row[reference_col]).strip() if reference_col and not pd.isna(row[reference_col]) else "CO5590"
                 
-                # Determine unit based on template
-                unit = TEMPLATE_TO_UNIT.get(template, "Unknown")
+                template = resolved_template.template
+                unit = resolved_template.unit
                 
                 # Calculate the default value date for this template
                 value_date = self._get_default_value_date(template)
@@ -1184,7 +1354,10 @@ class SimplePaymentApp(QMainWindow):
                     'row_num': row_index,
                     'amount': amount,
                     'template': template,
+                    'source_code': resolved_template.source_code,
+                    'uses_pacs_flow': resolved_template.uses_pacs_flow,
                     'otr_number': otr,
+                    'reference': reference,
                     'unit': unit,
                     'status': 'Pending',
                     'value_date': value_date
@@ -1225,7 +1398,10 @@ class SimplePaymentApp(QMainWindow):
         next_day_templates = [
             "APFUNDINGAUD", "APFUNDINGCHF", "APFUNDINGCZK", "APFUNDINGGBP",
             "APFUNDINGGBP2", "APFUNDINGHKD", "APFUNDINGJPY", "APFUNDINGNZD",
-            "APFUNDINGPLN", "APFUNDINGSGD", "EURPAYMENTAP2"
+            "APFUNDINGPLN", "APFUNDINGSGD", "EURPAYMENTAP2",
+            "APAUDPACS", "APCHFPACS", "APGBPPACS", "APGBPPACS2",
+            "APHKDPACS", "APJPYPACS", "APNZDPACS", "APPLNPACS",
+            "APSGDPACS", "EURPMTAP2PACS"
         ]
         
         if template_name in next_day_templates:
