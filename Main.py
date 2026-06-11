@@ -1303,8 +1303,12 @@ class SimplePaymentApp(QMainWindow):
         self._load_credentials()
     
     def _browse_and_load(self):
+        default_folder = os.path.join(os.path.expanduser("~"), "Downloads")
+        if not os.path.isdir(default_folder):
+            default_folder = os.path.expanduser("~")
+
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Excel File", "", "Excel Files (*.xlsx *.xls)"
+            self, "Select Excel File", default_folder, "Excel Files (*.xlsx *.xls)"
         )
         
         if not file_path:
