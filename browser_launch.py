@@ -32,10 +32,6 @@ def build_edge_cdp_args(executable_path, user_data_dir, port):
 
 def get_bundled_browser_executable(base_path=None):
     browser_root = base_path or os.path.join(os.path.dirname(__file__), "browsers")
-    edge_executable = os.path.join(browser_root, "msedge", "Application", "msedge.exe")
-    if os.path.exists(edge_executable):
-        return edge_executable
-
     chromium_dirs = []
     if os.path.isdir(browser_root):
         chromium_dirs = sorted(
@@ -48,6 +44,10 @@ def get_bundled_browser_executable(base_path=None):
         executable = os.path.join(browser_root, chromium_dir, "chrome-win", "chrome.exe")
         if os.path.exists(executable):
             return executable
+
+    edge_executable = os.path.join(browser_root, "msedge", "Application", "msedge.exe")
+    if os.path.exists(edge_executable):
+        return edge_executable
     return None
 
 
