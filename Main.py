@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QTextEdit
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QDate, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter
+from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter, QBrush
 import re
 import subprocess
 from payment_mapping import (
@@ -1767,13 +1767,23 @@ class SimplePaymentApp(QMainWindow):
             bg_color = QColor(112, 42, 48) if self.dark_mode else QColor(255, 226, 226)
             text_color = QColor(255, 241, 241) if self.dark_mode else QColor(126, 30, 30)
         else:
-            return
+            bg_color = None
+            text_color = None
 
         for col in range(self.table_widget.columnCount()):
             item = self.table_widget.item(row_idx, col)
             if item:
-                item.setBackground(bg_color)
-                item.setForeground(text_color)
+                item.setBackground(QBrush(bg_color) if bg_color else QBrush())
+                item.setForeground(QBrush(text_color) if text_color else QBrush())
+
+    def _refresh_table_theme(self):
+        if not hasattr(self, "table_widget"):
+            return
+
+        for row in range(self.table_widget.rowCount()):
+            status_item = self.table_widget.item(row, 4)
+            status = status_item.text().strip() if status_item else ""
+            self._apply_row_status_style(row, status)
 
     def _update_payment_status(self, row_num, status):
         """Update the status of a specific payment in the table."""
@@ -2180,7 +2190,8 @@ class SimplePaymentApp(QMainWindow):
     def _reset_copy_button(self, original_text, original_style):
         """Reset the copy button to its original state"""
         self.copy_refs_btn.setText(original_text)
-        self.copy_refs_btn.setStyleSheet(original_style)
+        self.copy_refs_btn.setStyleSheet("")
+        self.apply_style()
 
     def apply_style(self):
         if self.dark_mode:
@@ -2526,6 +2537,7 @@ class SimplePaymentApp(QMainWindow):
                     height: 0px;
                 }
             """)
+        self._refresh_table_theme()
 
     def toggle_dark_mode(self):
         self.dark_mode = not self.dark_mode
