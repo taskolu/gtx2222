@@ -1221,8 +1221,26 @@ class ApprovalAuditWorker(BrowserWorker):
         page.get_by_role("button", name="Log in").click()
         self._handle_license_popup(page)
         self.signals.progress.emit("Please enter OTP manually and complete login")
-        page.wait_for_selector('span:has-text("You are connected to GTExchange")', timeout=180000)
+        page.wait_for_selector(
+            'a:has-text("Search"), a:has-text("Messages"), span:has-text("You are connected to GTExchange")',
+            timeout=180000,
+        )
         self._handle_license_popup(page)
+        self.signals.progress.emit("Login complete; preparing Search page")
+
+    def _open_search_page(self, page):
+        self.signals.progress.emit("Opening Search page...")
+        try:
+            page.get_by_role("link", name=re.compile(r"^Search$")).click(timeout=10000)
+        except Exception as exc:
+            self.signals.progress.emit(f"Search menu click fallback: {exc}")
+            try:
+                page.locator('a:has-text("Search")').first.click(timeout=10000)
+            except Exception as fallback_exc:
+                self.signals.progress.emit(f"Direct Search URL fallback: {fallback_exc}")
+                page.goto("https://swift.gtxclient.converaextprod.net/web.uftc/message/search/search.message.faces")
+
+        page.get_by_role("textbox", name="GTX Reference").wait_for(timeout=15000)
 
     def _payment_for_reference(self, approval_reference, used_rows):
         for payment in self.payments_data:
@@ -1235,13 +1253,19 @@ class ApprovalAuditWorker(BrowserWorker):
         return None
 
     def _search_details_text(self, page, gtx_reference):
-        page.get_by_role("link", name="Search").click()
+        self._open_search_page(page)
+        self.signals.progress.emit(f"Searching GTX reference {gtx_reference}...")
         page.get_by_role("textbox", name="GTX Reference").click()
         page.get_by_role("textbox", name="GTX Reference").press("ControlOrMeta+a")
         page.get_by_role("textbox", name="GTX Reference").fill(gtx_reference)
         page.get_by_role("button", name="Search").click()
-        page.get_by_role("link", name=gtx_reference).click()
+        self.signals.progress.emit(f"Opening details for {gtx_reference}...")
+        try:
+            page.get_by_role("link", name=gtx_reference).click(timeout=15000)
+        except Exception:
+            page.locator(f'a:has-text("{gtx_reference}")').first.click(timeout=15000)
         page.locator("#container-body").wait_for(timeout=15000)
+        self.signals.progress.emit(f"Reading details for {gtx_reference}...")
         return page.locator("#container-body").inner_text()
 
     def run(self):
@@ -1597,6 +1621,34 @@ class SimplePaymentApp(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
+        excel_group = QGroupBox("Excel Import")
+        excel_layout = QVBoxLayout(excel_group)
+        excel_layout.setContentsMargins(14, 18, 14, 14)
+        excel_layout.setSpacing(10)
+
+        self.approval_file_path_input = QLineEdit()
+        self.approval_file_path_input.setReadOnly(True)
+        self.approval_file_path_input.setPlaceholderText("Select the weekly funding Excel file")
+        excel_layout.addWidget(self.approval_file_path_input)
+
+        approval_button_layout = QHBoxLayout()
+        approval_button_layout.setSpacing(8)
+        approval_button_layout.addStretch()
+
+        self.approval_browse_btn = QPushButton("Browse")
+        self.approval_browse_btn.setObjectName("secondaryButton")
+        self.approval_browse_btn.clicked.connect(self._browse_and_load)
+        self.approval_browse_btn.setFixedWidth(80)
+        approval_button_layout.addWidget(self.approval_browse_btn)
+
+        self.approval_clear_btn = QPushButton("Clear")
+        self.approval_clear_btn.setObjectName("secondaryButton")
+        self.approval_clear_btn.clicked.connect(self._clear_data)
+        self.approval_clear_btn.setFixedWidth(80)
+        approval_button_layout.addWidget(self.approval_clear_btn)
+
+        excel_layout.addLayout(approval_button_layout)
+
         refs_group = QGroupBox("Approval References")
         refs_layout = QVBoxLayout(refs_group)
         refs_layout.setContentsMargins(14, 18, 14, 14)
@@ -1634,6 +1686,7 @@ class SimplePaymentApp(QMainWindow):
         self.approval_results_table.setWordWrap(False)
         results_layout.addWidget(self.approval_results_table)
 
+        layout.addWidget(excel_group)
         layout.addWidget(refs_group)
         layout.addWidget(results_group)
         return tab
@@ -1651,6 +1704,8 @@ class SimplePaymentApp(QMainWindow):
             return
             
         self.file_path_input.setText(file_path)
+        if hasattr(self, "approval_file_path_input"):
+            self.approval_file_path_input.setText(file_path)
         self.statusBar.showMessage("Loading Excel file...")
         
         try:
@@ -1850,6 +1905,10 @@ class SimplePaymentApp(QMainWindow):
     
     def _clear_data(self):
         self.file_path_input.clear()
+        if hasattr(self, "approval_file_path_input"):
+            self.approval_file_path_input.clear()
+        if hasattr(self, "approval_results_table"):
+            self.approval_results_table.setRowCount(0)
         self.table_widget.setRowCount(0)
         self.payments_data = []
         self.start_btn.setEnabled(False)
@@ -1888,6 +1947,12 @@ class SimplePaymentApp(QMainWindow):
         self.browse_btn.setEnabled(False)
         self.clear_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
+        if hasattr(self, "approval_browse_btn"):
+            self.approval_browse_btn.setEnabled(False)
+        if hasattr(self, "approval_clear_btn"):
+            self.approval_clear_btn.setEnabled(False)
+        if hasattr(self, "approval_audit_btn"):
+            self.approval_audit_btn.setEnabled(False)
         
         # Start the spinner animations
         self.start_spinner.setVisible(True)
@@ -1938,6 +2003,8 @@ class SimplePaymentApp(QMainWindow):
         self.clear_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
         self.approval_audit_btn.setEnabled(False)
+        self.approval_browse_btn.setEnabled(False)
+        self.approval_clear_btn.setEnabled(False)
 
         self.status_spinner.setVisible(True)
         self.status_spinner.start_spinning()
@@ -2194,6 +2261,10 @@ class SimplePaymentApp(QMainWindow):
         self.start_btn.setEnabled(bool(self.payments_data))
         if hasattr(self, "approval_audit_btn"):
             self.approval_audit_btn.setEnabled(True)
+        if hasattr(self, "approval_browse_btn"):
+            self.approval_browse_btn.setEnabled(True)
+        if hasattr(self, "approval_clear_btn"):
+            self.approval_clear_btn.setEnabled(True)
         
         # Clean up thread
         if self.worker_thread and self.worker_thread.isRunning():
