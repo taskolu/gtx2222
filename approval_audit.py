@@ -171,19 +171,20 @@ def build_approval_audit_html(results, excel_file="", run_date=""):
   <meta charset="utf-8">
   <style>
     body {{ background: #ffffff; color: #333333; font-family: Arial, Helvetica, sans-serif; font-size: 10pt; margin: 0; }}
-    .payment-section {{ page-break-inside: avoid; margin: 0; padding: 0; }}
+    .payment-section {{ margin: 0; padding: 0; }}
     .payment-section:last-child {{ page-break-after: auto; }}
     .gtexchange-copy {{ width: 100%; border: 2px solid #4d4d4d; }}
     .gtexchange-title {{ background-color: #4f4f4f; color: #ffffff; font-size: 11pt; padding: 7px 8px; }}
     .gtexchange-content {{ border-top: 1px solid #d2d2d2; padding: 7px 8px 9px; }}
-    .headerPrintView {{ background-color: #f7f7f7; border: 1px solid #d6d6d6; margin: 0 0 10px; padding: 5px; }}
+    .headerPrintView {{ background-color: #f7f7f7; border: 1px solid #d6d6d6; margin: 0; padding: 5px; }}
     .headerPrintView table {{ border-collapse: collapse; width: 100%; }}
     .headerPrintView td {{ border-left: 1px solid #d8d8d8; padding: 3px 10px 3px 4px; vertical-align: top; }}
     .headerPrintView td:first-child {{ border-left: 0; }}
     .headerPrintViewSep {{ border-left: 1px solid #c2c2c2; width: 12px; }}
     .bodyStdLabelTrueType, pre {{ font-family: "Courier New", Consolas, monospace; font-size: 9pt; line-height: 1.2; }}
     pre {{ margin: 0; white-space: pre-wrap; }}
-    .messageBody {{ margin: 5px; }}
+    .messageBody {{ margin: 0; }}
+    .messageBody pre {{ border-left: 1px solid #d6d6d6; border-right: 1px solid #d6d6d6; border-bottom: 1px solid #d6d6d6; padding: 8px 10px; }}
     .bodyStdListElt {{ color: #333333; }}
   </style>
 </head>
