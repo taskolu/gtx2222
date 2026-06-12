@@ -1220,24 +1220,42 @@ class ApprovalAuditWorker(BrowserWorker):
         page.locator("[id=\"userloginform\\:password\"]").fill(self.password)
         page.get_by_role("button", name="Log in").click()
         self._handle_license_popup(page)
-        self.signals.progress.emit("Please enter OTP manually and complete login")
-        page.wait_for_selector(
-            'a:has-text("Search"), a:has-text("Messages"), span:has-text("You are connected to GTExchange")',
-            timeout=180000,
-        )
+
+        try:
+            validation_code = page.get_by_role("textbox", name="Validation code")
+            validation_code.wait_for(timeout=15000)
+            if self.otp_code:
+                validation_code.fill(self.otp_code)
+                validation_code.press("Enter")
+            else:
+                self.signals.progress.emit("Please enter OTP manually and press Enter")
+        except Exception:
+            self.signals.progress.emit("OTP field not shown; waiting for GTExchange menu")
+
+        page.get_by_role("link", name="Messages").wait_for(timeout=180000)
         self._handle_license_popup(page)
         self.signals.progress.emit("Login complete; preparing Search page")
 
     def _open_search_page(self, page):
-        self.signals.progress.emit("Opening Search page...")
+        self.signals.progress.emit("Opening Messages menu...")
         try:
-            page.get_by_role("link", name=re.compile(r"^Search$")).click(timeout=10000)
-        except Exception as exc:
-            self.signals.progress.emit(f"Search menu click fallback: {exc}")
+            page.get_by_role("link", name="Messages").click(timeout=10000)
+        except Exception as messages_exc:
+            self.signals.progress.emit(f"Messages menu click fallback: {messages_exc}")
             try:
-                page.locator('a:has-text("Search")').first.click(timeout=10000)
+                page.locator('a:has-text("Messages")').first.click(timeout=10000)
             except Exception as fallback_exc:
-                self.signals.progress.emit(f"Direct Search URL fallback: {fallback_exc}")
+                self.signals.progress.emit(f"Messages fallback failed: {fallback_exc}")
+
+        self.signals.progress.emit("Opening Search Messages page...")
+        try:
+            page.get_by_role("link", name="Search Messages").click(timeout=10000)
+        except Exception as search_exc:
+            self.signals.progress.emit(f"Search Messages click fallback: {search_exc}")
+            try:
+                page.locator('a:has-text("Search Messages")').first.click(timeout=10000)
+            except Exception as fallback_exc:
+                self.signals.progress.emit(f"Direct Search Messages URL fallback: {fallback_exc}")
                 page.goto("https://swift.gtxclient.converaextprod.net/web.uftc/message/search/search.message.faces")
 
         page.get_by_role("textbox", name="GTX Reference").wait_for(timeout=15000)
