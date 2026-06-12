@@ -204,23 +204,41 @@ def parse_payment_details(text):
     )
 
 
-def compare_payment_details(payment, gtx_reference, details_text):
-    parsed = parse_payment_details(details_text)
+def parse_legacy_payment_details(text):
+    details_text = str(text or "")
+    amount_match = re.search(
+        r"Currency Transaction Amount\s+([A-Z]{3})\s+([0-9,.\s]+)",
+        details_text,
+        re.IGNORECASE,
+    )
+    currency = amount_match.group(1).strip() if amount_match else ""
+    amount = amount_match.group(2).strip() if amount_match else ""
+
+    remittance = _section_match(
+        r"Remittance Information\s+(.+?)\s+\(71A\)\s+Details of Charges",
+        details_text,
+    )
+
+    sender_reference = _first_match(r"Sender's Reference\s+([A-Z0-9]+)", details_text)
+    transaction_reference = _first_match(r"Transaction Reference\s+([A-Z0-9]+)", details_text)
+
+    return ParsedPaymentDetails(
+        unit=_first_match(r"\bUnit\s+([A-Z_]+)", details_text),
+        to_bic=_first_match(r"\bTo\s*:\s*([A-Z0-9]{8,11})", details_text),
+        message_id=sender_reference,
+        instruction_id=transaction_reference,
+        end_to_end_id=transaction_reference,
+        interbank_ccy=currency,
+        interbank_amount=amount,
+        settlement_date=_first_match(r"Requested Execution Date\s+([0-9]{1,2}\.[A-Za-z]{3},?\d{2,4})", details_text),
+        instructed_ccy=currency,
+        instructed_amount=amount,
+        unstructured=remittance,
+    )
+
+
+def compare_parsed_details(payment, gtx_reference, parsed, expected_amount, expected_date, currency, expected_narrative):
     issues = []
-    expected_amount = normalize_amount(format_amount(payment.get("amount"), payment.get("source_code")))
-    expected_date = normalize_date(payment.get("value_date"))
-    currency = expected_currency(payment)
-    expected_narrative = build_narrative(payment.get("reference", "CO5590"), payment.get("otr_number", ""))
-    if not payment.get("uses_pacs_flow", True):
-        expected_bic = expected_to_bic(payment)
-        if expected_bic and parsed.to_bic and parsed.to_bic != expected_bic:
-            issues.append(f"To BIC mismatch: expected {expected_bic}, found {parsed.to_bic}")
-        issues.append("Legacy/non-pacs template details opened; manual review required")
-        return AuditResult(
-            status="Needs manual review",
-            issues=issues,
-            parsed=parsed,
-        )
 
     required_fields = {
         "unit": parsed.unit,
@@ -286,4 +304,31 @@ def compare_payment_details(payment, gtx_reference, details_text):
         status="Match" if not issues else "Needs manual review",
         issues=issues,
         parsed=parsed,
+    )
+
+
+def compare_payment_details(payment, gtx_reference, details_text):
+    expected_amount = normalize_amount(format_amount(payment.get("amount"), payment.get("source_code")))
+    expected_date = normalize_date(payment.get("value_date"))
+    currency = expected_currency(payment)
+    expected_narrative = build_narrative(payment.get("reference", "CO5590"), payment.get("otr_number", ""))
+    if not payment.get("uses_pacs_flow", True):
+        return compare_parsed_details(
+            payment,
+            gtx_reference,
+            parse_legacy_payment_details(details_text),
+            expected_amount,
+            expected_date,
+            currency,
+            expected_narrative,
+        )
+
+    return compare_parsed_details(
+        payment,
+        gtx_reference,
+        parse_payment_details(details_text),
+        expected_amount,
+        expected_date,
+        currency,
+        expected_narrative,
     )
