@@ -6,8 +6,23 @@ from decimal import Decimal, InvalidOperation
 from payment_mapping import build_narrative, format_amount
 
 
+EXPECTED_TO_BIC_BY_TEMPLATE = {
+    "APAUDPACS": "NATAAU3302S",
+    "APCHFPACS": "BOFACH2XXXX",
+    "EURPMTAP2PACS": "BBRUBEBB010",
+    "APHKDPACS": "BOFAHKHXXXX",
+    "APJPYPACS": "IRVTUS3NXXX",
+    "APGBPPACS": "BARCGB22XXX",
+    "APGBPPACS2": "BARCGB22XXX",
+    "APUSDPACS": "IRVTUS3NXXX",
+    "APCADPACS": "BOFMCAM2XXX",
+    "APNZDPACS": "BOFAAUSXXXX",
+    "APSGDPACS": "BOFASG2XXXX",
+    "APFUNDINGCZK": "CEKOCZPPXXX",
+    "APPLNPACS": "BARCGB22XXX",
+}
+
 EXPECTED_TO_BIC_BY_SOURCE = {
-    # Confirmed from captured GTExchange details for USDBNYCHKINC / APUSDPACS.
     "USDBNYCHKINC": "IRVTUS3NXXX",
 }
 
@@ -130,7 +145,9 @@ def expected_currency(payment):
 
 
 def expected_to_bic(payment):
-    return EXPECTED_TO_BIC_BY_SOURCE.get(str(payment.get("source_code") or "").strip())
+    template = str(payment.get("template") or "").strip()
+    source_code = str(payment.get("source_code") or "").strip()
+    return EXPECTED_TO_BIC_BY_TEMPLATE.get(template) or EXPECTED_TO_BIC_BY_SOURCE.get(source_code)
 
 
 def parse_payment_details(text):

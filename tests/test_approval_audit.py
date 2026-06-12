@@ -2,6 +2,7 @@ import unittest
 
 from approval_audit import (
     compare_payment_details,
+    expected_to_bic,
     normalize_date,
     parse_payment_details,
     parse_reference_lines,
@@ -140,7 +141,8 @@ class ApprovalAuditTests(unittest.TestCase):
     def test_compare_payment_details_requires_confirmed_to_bic_mapping(self):
         payment = {
             "amount": 1721621.07,
-            "source_code": "AUDCUKBOA",
+            "source_code": "UNKNOWN",
+            "template": "UNKNOWNPACS",
             "unit": "CCT_CHUK",
             "reference": "CO5590",
             "otr_number": (
@@ -155,6 +157,16 @@ class ApprovalAuditTests(unittest.TestCase):
 
         self.assertEqual(result.status, "Needs manual review")
         self.assertTrue(any("no expected to bic mapping" in issue.lower() for issue in result.issues))
+
+    def test_expected_to_bic_uses_approval_template_mapping(self):
+        self.assertEqual(
+            expected_to_bic({"source_code": "AUDCUKBOA", "template": "APAUDPACS"}),
+            "NATAAU3302S",
+        )
+        self.assertEqual(
+            expected_to_bic({"source_code": "CADBMOIN", "template": "APCADPACS"}),
+            "BOFMCAM2XXX",
+        )
 
 
 if __name__ == "__main__":
