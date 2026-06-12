@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
-from payment_mapping import build_narrative, format_amount
+from payment_mapping import build_narrative, format_amount, resolve_payment_template
 
 
 EXPECTED_TO_BIC_BY_TEMPLATE = {
@@ -144,8 +144,22 @@ def expected_currency(payment):
     return match.group(1) if match else ""
 
 
-def expected_to_bic(payment):
+def approval_template_name(payment):
     template = str(payment.get("template") or "").strip()
+    resolved = resolve_payment_template(template)
+    if resolved:
+        return resolved.template
+
+    source_code = str(payment.get("source_code") or "").strip()
+    resolved = resolve_payment_template(source_code)
+    if resolved:
+        return resolved.template
+
+    return template
+
+
+def expected_to_bic(payment):
+    template = approval_template_name(payment)
     source_code = str(payment.get("source_code") or "").strip()
     return EXPECTED_TO_BIC_BY_TEMPLATE.get(template) or EXPECTED_TO_BIC_BY_SOURCE.get(source_code)
 

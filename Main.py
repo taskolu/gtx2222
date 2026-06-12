@@ -15,7 +15,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QDate, QPoint, QRect,
 from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter, QBrush
 import re
 import subprocess
-from approval_audit import compare_payment_details, parse_reference_lines
+from approval_audit import approval_template_name, compare_payment_details, parse_reference_lines
 from payment_mapping import (
     build_narrative,
     format_amount,
@@ -1273,7 +1273,7 @@ class ApprovalAuditWorker(BrowserWorker):
             row_num = payment.get("row_num")
             if row_num in used_rows:
                 continue
-            if payment.get("template") == approval_reference.template:
+            if approval_template_name(payment) == approval_reference.template:
                 if mark_used:
                     used_rows.add(row_num)
                 return payment

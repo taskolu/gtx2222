@@ -1,6 +1,7 @@
 import unittest
 
 from approval_audit import (
+    approval_template_name,
     compare_payment_details,
     expected_to_bic,
     normalize_date,
@@ -167,6 +168,12 @@ class ApprovalAuditTests(unittest.TestCase):
             expected_to_bic({"source_code": "CADBMOIN", "template": "APCADPACS"}),
             "BOFMCAM2XXX",
         )
+
+    def test_expected_to_bic_resolves_excel_account_code_to_template(self):
+        payment = {"source_code": "CHFCUKCSB", "template": "CHFCUKCSB"}
+
+        self.assertEqual(approval_template_name(payment), "APCHFPACS")
+        self.assertEqual(expected_to_bic(payment), "BOFACH2XXXX")
 
 
 if __name__ == "__main__":
