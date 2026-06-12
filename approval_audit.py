@@ -111,6 +111,7 @@ def _strip_unsafe_print_html(raw_html):
 
 def extract_gtexchange_print_view_html(raw_html, gtx_reference="", fallback_text=""):
     cleaned = _strip_unsafe_print_html(raw_html)
+    reference = html.escape(str(gtx_reference or ""))
 
     header_match = re.search(
         r'<div\b[^>]*class="[^"]*\bheaderPrintView\b[^"]*"[^>]*>.*?</div>',
@@ -126,20 +127,25 @@ def extract_gtexchange_print_view_html(raw_html, gtx_reference="", fallback_text
     if header_match or body_match:
         return (
             '<div class="gtexchange-copy">'
+            f'<div class="gtexchange-title">{reference}</div>'
+            '<div class="gtexchange-content">'
             f'{header_match.group(0) if header_match else ""}'
             '<div class="messageBody">'
             f'{body_match.group(0) if body_match else ""}'
             "</div>"
             "</div>"
+            "</div>"
         )
 
-    reference = html.escape(str(gtx_reference or ""))
     fallback = html.escape(str(fallback_text or "").strip())
     return (
         '<div class="gtexchange-copy">'
+        f'<div class="gtexchange-title">{reference}</div>'
+        '<div class="gtexchange-content">'
         f'<div class="headerPrintView"><table><tr><td><pre><span style="FONT-WEIGHT: bold;">Reference</span></pre></td>'
         f"<td><pre>{reference}</pre></td></tr></table></div>"
         f'<div class="messageBody"><pre><span class="bodyStdLabelTrueType completeDataDisplay">{fallback}</span></pre></div>'
+        "</div>"
         "</div>"
     )
 
@@ -164,13 +170,16 @@ def build_approval_audit_html(results, excel_file="", run_date=""):
   <meta charset="utf-8">
   <style>
     body {{ background: #ffffff; color: #333333; font-family: Arial, Helvetica, sans-serif; font-size: 10pt; margin: 0; }}
-    .payment-section {{ page-break-after: always; margin: 0 0 18px; }}
+    .payment-section {{ page-break-after: always; margin: 0 0 18px; padding: 0; }}
     .payment-section:last-child {{ page-break-after: auto; }}
-    .gtexchange-copy {{ width: 100%; }}
-    .headerPrintView {{ background: #ffffff; border: 0; margin: 0 0 10px; }}
+    .gtexchange-copy {{ width: 100%; border: 2px solid #4d4d4d; }}
+    .gtexchange-title {{ background-color: #4f4f4f; color: #ffffff; font-size: 11pt; padding: 7px 8px; }}
+    .gtexchange-content {{ border-top: 1px solid #d2d2d2; padding: 7px 8px 9px; }}
+    .headerPrintView {{ background-color: #f7f7f7; border: 1px solid #d6d6d6; margin: 0 0 10px; padding: 5px; }}
     .headerPrintView table {{ border-collapse: collapse; width: 100%; }}
-    .headerPrintView td {{ padding: 2px 10px 2px 0; vertical-align: top; }}
-    .headerPrintViewSep {{ border-left: 1px solid #b7b7b7; width: 12px; }}
+    .headerPrintView td {{ border-left: 1px solid #d8d8d8; padding: 3px 10px 3px 4px; vertical-align: top; }}
+    .headerPrintView td:first-child {{ border-left: 0; }}
+    .headerPrintViewSep {{ border-left: 1px solid #c2c2c2; width: 12px; }}
     .bodyStdLabelTrueType, pre {{ font-family: "Courier New", Consolas, monospace; font-size: 9pt; line-height: 1.2; }}
     pre {{ margin: 0; white-space: pre-wrap; }}
     .messageBody {{ margin: 5px; }}
