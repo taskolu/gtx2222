@@ -22,7 +22,7 @@ from payment_mapping import (
     is_valid_payment_code,
     resolve_payment_template,
 )
-from browser_launch import get_browser_launch_options, wait_for_cdp_endpoint
+from browser_launch import build_edge_cdp_args, get_browser_launch_options, wait_for_cdp_endpoint
 
 # SpinningIcon class - a QLabel that displays a spinning image
 class SpinningIcon(QLabel):
@@ -183,15 +183,7 @@ class BrowserWorker(QObject):
         user_data_dir = tempfile.mkdtemp(prefix="gtx_playwright_edge_")
         port = self._find_free_port()
         endpoint = f"http://127.0.0.1:{port}"
-        args = [
-            executable_path,
-            f"--remote-debugging-port={port}",
-            f"--user-data-dir={user_data_dir}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-search-engine-choice-screen",
-            "about:blank",
-        ]
+        args = build_edge_cdp_args(executable_path, user_data_dir, port)
         self.signals.progress.emit(f"Starting bundled Edge with remote debugging on port {port}")
         process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         wait_for_cdp_endpoint(endpoint, process)

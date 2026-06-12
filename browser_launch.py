@@ -17,6 +17,19 @@ def wait_for_cdp_endpoint(endpoint, process=None, timeout=20, urlopen=urllib.req
     raise TimeoutError("Timed out waiting for bundled Edge remote debugging")
 
 
+def build_edge_cdp_args(executable_path, user_data_dir, port):
+    return [
+        executable_path,
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={user_data_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-search-engine-choice-screen",
+        "--disable-features=RendererCodeIntegrity",
+        "about:blank",
+    ]
+
+
 def get_bundled_browser_executable(base_path=None):
     browser_root = base_path or os.path.join(os.path.dirname(__file__), "browsers")
     edge_executable = os.path.join(browser_root, "msedge", "Application", "msedge.exe")

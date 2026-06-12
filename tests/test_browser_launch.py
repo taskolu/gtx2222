@@ -5,6 +5,15 @@ import browser_launch
 
 
 class BrowserLaunchTests(unittest.TestCase):
+    def test_bundled_edge_cdp_args_disable_renderer_code_integrity(self):
+        args = browser_launch.build_edge_cdp_args(
+            "msedge.exe",
+            "profile-dir",
+            9222,
+        )
+
+        self.assertIn("--disable-features=RendererCodeIntegrity", args)
+
     def test_wait_for_cdp_allows_parent_process_to_exit(self):
         class FakeProcess:
             def poll(self):
