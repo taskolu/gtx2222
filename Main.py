@@ -1746,6 +1746,7 @@ class SimplePaymentApp(QMainWindow):
         self.approval_results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.approval_results_table.setWordWrap(False)
         self.approval_results_table.setMinimumHeight(320)
+        self.approval_results_table.cellDoubleClicked.connect(self._show_approval_result_details)
         self.approval_select_all_shortcut = QShortcut(QKeySequence.StandardKey.SelectAll, self.approval_results_table)
         self.approval_select_all_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.approval_select_all_shortcut.activated.connect(self.approval_results_table.selectAll)
@@ -2249,9 +2250,9 @@ class SimplePaymentApp(QMainWindow):
         layout.addLayout(button_layout)
         dialog.exec()
 
-    def _copy_error_text(self, error_message, button=None):
+    def _copy_error_text(self, error_message, button=None, status_message="Error details copied to clipboard"):
         QApplication.clipboard().setText(error_message)
-        self.statusBar.showMessage("Error details copied to clipboard")
+        self.statusBar.showMessage(status_message)
         if button:
             original_text = button.text()
             button.setText("Copied")
@@ -2359,17 +2360,62 @@ class SimplePaymentApp(QMainWindow):
             self._set_approval_result_row(row, result)
 
     def _set_approval_result_row(self, row, result):
+        full_details = str(result.get("details", ""))
+        display_status = str(result.get("status", ""))
+        display_details = self._summarize_approval_details(full_details)
         values = [
             result.get("template", ""),
             result.get("reference", ""),
             result.get("expected_amount", ""),
             result.get("expected_date", ""),
-            result.get("status", ""),
-            result.get("details", ""),
+            display_status,
+            display_details,
         ]
         for col, value in enumerate(values):
-            self.approval_results_table.setItem(row, col, QTableWidgetItem(str(value)))
+            item = QTableWidgetItem(str(value))
+            if col == 5:
+                item.setData(Qt.ItemDataRole.UserRole, full_details)
+                item.setToolTip(full_details)
+            elif full_details:
+                item.setToolTip(full_details)
+            self.approval_results_table.setItem(row, col, item)
         self._apply_approval_result_style(row, result.get("status", ""))
+
+    def _summarize_approval_details(self, details):
+        text = str(details or "").strip()
+        if not text:
+            return ""
+        if text in {"All checked fields match", "Waiting for audit", "Paste approval references, then run dry audit"}:
+            return text
+        if text.startswith("Search/read failed"):
+            return "Search/read failed"
+        if "no matching Excel row" in text:
+            return "No matching Excel row"
+
+        labels = []
+        for issue in [part.strip() for part in text.split(";") if part.strip()]:
+            lower_issue = issue.lower()
+            if "amount mismatch" in lower_issue:
+                label = "Amount mismatch"
+            elif "settlement date mismatch" in lower_issue:
+                label = "Date mismatch"
+            elif "unstructured remittance mismatch" in lower_issue:
+                label = "Remittance mismatch"
+            elif "to bic mismatch" in lower_issue:
+                label = "To BIC mismatch"
+            elif lower_issue.startswith("missing "):
+                label = "Missing fields"
+            elif "currency" in lower_issue and "mismatch" in lower_issue:
+                label = "Currency mismatch"
+            elif "id mismatch" in lower_issue:
+                label = "Reference ID mismatch"
+            else:
+                label = issue
+
+            if label not in labels:
+                labels.append(label)
+
+        return "; ".join(labels) if labels else text
 
     def _find_approval_result_row(self, result):
         reference = str(result.get("reference", ""))
@@ -2429,12 +2475,61 @@ class SimplePaymentApp(QMainWindow):
         for row in rows:
             values = []
             for col in cols:
-                item = table.item(row, col)
-                values.append(item.text() if item else "")
+                values.append(self._approval_cell_copy_text(row, col))
             lines.append("\t".join(values))
 
         QApplication.clipboard().setText("\n".join(lines))
         self.statusBar.showMessage(f"Copied {len(rows)} approval result rows")
+
+    def _approval_cell_copy_text(self, row, col):
+        item = self.approval_results_table.item(row, col)
+        if not item:
+            return ""
+        if col == 5:
+            return item.data(Qt.ItemDataRole.UserRole) or item.text()
+        return item.text()
+
+    def _approval_result_full_text_from_row(self, row):
+        labels = ["Template", "GTX Reference", "Expected Amount", "Value Date", "Result", "Details"]
+        lines = []
+        for col, label in enumerate(labels):
+            lines.append(f"{label}: {self._approval_cell_copy_text(row, col)}")
+        return "\n".join(lines)
+
+    def _show_approval_result_details(self, row, _col):
+        if row < 0 or row >= self.approval_results_table.rowCount():
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Approval Audit Details")
+        dialog.resize(760, 420)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        details_text = QTextEdit()
+        details_text.setReadOnly(True)
+        details_text.setPlainText(self._approval_result_full_text_from_row(row))
+        layout.addWidget(details_text)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        copy_btn = QPushButton("Copy")
+        copy_btn.setObjectName("secondaryButton")
+        copy_btn.clicked.connect(
+            lambda: self._copy_error_text(details_text.toPlainText(), copy_btn, "Approval details copied")
+        )
+        button_layout.addWidget(copy_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("secondaryButton")
+        close_btn.clicked.connect(dialog.accept)
+        button_layout.addWidget(close_btn)
+
+        layout.addLayout(button_layout)
+        dialog.exec()
 
     def _apply_approval_result_style(self, row, status):
         if status == "Match":
