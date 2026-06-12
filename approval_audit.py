@@ -1,3 +1,4 @@
+import html
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -98,6 +99,109 @@ def format_payment_copy(template, gtx_reference, details_text):
         f"{'-' * 72}\n"
         f"{details}\n"
     )
+
+
+def build_approval_audit_html(results, excel_file="", run_date=""):
+    result_rows = list(results or [])
+    total_count = len(result_rows)
+    match_count = sum(1 for result in result_rows if result.get("status") == "Match")
+    review_count = sum(1 for result in result_rows if result.get("status") == "Needs manual review")
+    excel_display = html.escape(str(excel_file or ""))
+    run_date_display = html.escape(str(run_date or ""))
+
+    summary_rows = []
+    detail_sections = []
+    for index, result in enumerate(result_rows, start=1):
+        status = str(result.get("status") or "")
+        status_class = "match" if status == "Match" else "review"
+        template = html.escape(str(result.get("template") or ""))
+        reference = html.escape(str(result.get("reference") or ""))
+        amount = html.escape(str(result.get("expected_amount") or ""))
+        value_date = html.escape(str(result.get("expected_date") or ""))
+        details = html.escape(str(result.get("details") or ""))
+        payment_copy = html.escape(str(result.get("payment_copy") or "").strip())
+
+        summary_rows.append(
+            "<tr>"
+            f"<td>{index}</td>"
+            f"<td>{template}</td>"
+            f"<td>{reference}</td>"
+            f"<td class=\"amount\">{amount}</td>"
+            f"<td>{value_date}</td>"
+            f"<td><span class=\"status {status_class}\">{html.escape(status)}</span></td>"
+            f"<td>{details}</td>"
+            "</tr>"
+        )
+
+        payment_copy_block = (
+            f"<pre>{payment_copy}</pre>"
+            if payment_copy
+            else "<p class=\"muted\">No payment copy was captured for this reference.</p>"
+        )
+        detail_sections.append(
+            "<section class=\"payment-section\">"
+            f"<h2>{index}. {template} <span>{reference}</span></h2>"
+            "<dl>"
+            f"<dt>Expected amount</dt><dd>{amount}</dd>"
+            f"<dt>Value date</dt><dd>{value_date}</dd>"
+            f"<dt>Result</dt><dd><span class=\"status {status_class}\">{html.escape(status)}</span></dd>"
+            f"<dt>Details</dt><dd>{details}</dd>"
+            "</dl>"
+            "<h3>GTExchange Payment Copy</h3>"
+            f"{payment_copy_block}"
+            "</section>"
+        )
+
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {{ color: #172033; font-family: Arial, Helvetica, sans-serif; font-size: 10pt; line-height: 1.35; }}
+    h1 {{ color: #102a43; font-size: 22pt; margin: 0 0 6px; }}
+    h2 {{ color: #102a43; font-size: 13pt; margin: 0 0 8px; }}
+    h2 span {{ color: #52606d; font-weight: normal; }}
+    h3 {{ color: #334e68; font-size: 11pt; margin: 12px 0 6px; }}
+    .meta {{ color: #52606d; margin-bottom: 14px; }}
+    .cards {{ display: table; width: 100%; margin: 14px 0 18px; border-spacing: 8px 0; }}
+    .card {{ display: table-cell; border: 1px solid #d9e2ec; border-radius: 6px; padding: 10px; background: #f8fafc; }}
+    .card div {{ color: #627d98; font-size: 8.5pt; text-transform: uppercase; }}
+    .card strong {{ display: block; color: #102a43; font-size: 17pt; margin-top: 4px; }}
+    table {{ border-collapse: collapse; width: 100%; margin-bottom: 18px; }}
+    th {{ background: #e9f0f7; color: #243b53; text-align: left; font-size: 8.5pt; padding: 7px; border: 1px solid #d9e2ec; }}
+    td {{ padding: 7px; border: 1px solid #d9e2ec; vertical-align: top; }}
+    td.amount {{ text-align: right; white-space: nowrap; }}
+    .status {{ border-radius: 10px; padding: 2px 7px; font-weight: bold; white-space: nowrap; }}
+    .status.match {{ color: #125330; background: #e3f8e9; }}
+    .status.review {{ color: #7e1e1e; background: #ffe7e7; }}
+    .payment-section {{ page-break-inside: avoid; border-top: 2px solid #d9e2ec; padding-top: 14px; margin-top: 18px; }}
+    dl {{ display: table; width: 100%; margin: 0 0 10px; }}
+    dt {{ display: table-cell; width: 22%; color: #627d98; font-weight: bold; padding: 4px 8px 4px 0; }}
+    dd {{ display: table-cell; width: 78%; margin: 0; padding: 4px 0; }}
+    pre {{ white-space: pre-wrap; word-wrap: break-word; background: #f8fafc; border: 1px solid #d9e2ec; border-radius: 6px; padding: 10px; font-family: Consolas, 'Courier New', monospace; font-size: 8.5pt; }}
+    .muted {{ color: #7b8794; }}
+  </style>
+</head>
+<body>
+  <h1>Approval Audit Pack</h1>
+  <div class="meta">Run date: {run_date_display}<br>Excel file: {excel_display}</div>
+  <div class="cards">
+    <div class="card"><div>Total references</div><strong>{total_count}</strong></div>
+    <div class="card"><div>Matches</div><strong>{match_count}</strong></div>
+    <div class="card"><div>Manual reviews</div><strong>{review_count}</strong></div>
+  </div>
+  <h2>Summary</h2>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Template</th><th>GTX Reference</th><th>Expected Amount</th><th>Value Date</th><th>Result</th><th>Details</th></tr>
+    </thead>
+    <tbody>
+      {''.join(summary_rows)}
+    </tbody>
+  </table>
+  {''.join(detail_sections)}
+</body>
+</html>"""
 
 
 def _first_match(pattern, text, flags=re.IGNORECASE):

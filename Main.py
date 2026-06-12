@@ -12,11 +12,18 @@ from PyQt6.QtWidgets import (
     QTextEdit, QTabWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QDate, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter, QBrush, QKeySequence, QShortcut
+from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter, QBrush, QKeySequence, QShortcut, QTextDocument
+from PyQt6.QtPrintSupport import QPrinter
 import re
 import subprocess
 import json
-from approval_audit import approval_template_name, compare_payment_details, format_payment_copy, parse_reference_lines
+from approval_audit import (
+    approval_template_name,
+    build_approval_audit_html,
+    compare_payment_details,
+    format_payment_copy,
+    parse_reference_lines,
+)
 from payment_mapping import (
     build_narrative,
     format_amount,
@@ -1448,6 +1455,7 @@ class SimplePaymentApp(QMainWindow):
         self.status_spinner = None  # Will hold the status bar spinner
         self.last_error_message = ""
         self.payment_copies_by_reference = {}
+        self.last_approval_results = []
         
         # Setup UI
         self._setup_ui()
@@ -1751,6 +1759,12 @@ class SimplePaymentApp(QMainWindow):
         self.copy_payment_copies_btn.clicked.connect(self._copy_payment_copies)
         self.copy_payment_copies_btn.setEnabled(False)
         results_action_layout.addWidget(self.copy_payment_copies_btn)
+
+        self.export_audit_pdf_btn = QPushButton("Export Audit PDF")
+        self.export_audit_pdf_btn.setObjectName("secondaryButton")
+        self.export_audit_pdf_btn.clicked.connect(self._export_approval_audit_pdf)
+        self.export_audit_pdf_btn.setEnabled(False)
+        results_action_layout.addWidget(self.export_audit_pdf_btn)
         results_layout.addLayout(results_action_layout)
 
         self.approval_results_table = QTableWidget()
@@ -2299,12 +2313,16 @@ class SimplePaymentApp(QMainWindow):
 
     def _clear_payment_copies(self):
         self.payment_copies_by_reference = {}
+        self.last_approval_results = []
         if hasattr(self, "copy_payment_copies_btn"):
             self.copy_payment_copies_btn.setEnabled(False)
         if hasattr(self, "view_payment_copies_btn"):
             self.view_payment_copies_btn.setEnabled(False)
+        if hasattr(self, "export_audit_pdf_btn"):
+            self.export_audit_pdf_btn.setEnabled(False)
 
     def _populate_payment_copies(self, results):
+        self.last_approval_results = list(results or [])
         self.payment_copies_by_reference = {}
         for result in results:
             payment_copy = str(result.get("payment_copy") or "").strip()
@@ -2314,13 +2332,23 @@ class SimplePaymentApp(QMainWindow):
         self._refresh_payment_copies_output()
 
     def _update_payment_copy_output(self, result):
+        self._store_live_approval_result(result)
         payment_copy = str(result.get("payment_copy") or "").strip()
         reference = str(result.get("reference") or "").strip()
         if not payment_copy or not reference:
+            self._refresh_payment_copies_output()
             return
 
         self.payment_copies_by_reference[reference] = payment_copy
         self._refresh_payment_copies_output()
+
+    def _store_live_approval_result(self, result):
+        reference = str(result.get("reference") or "").strip()
+        for index, stored_result in enumerate(self.last_approval_results):
+            if reference and str(stored_result.get("reference") or "").strip() == reference:
+                self.last_approval_results[index] = result
+                return
+        self.last_approval_results.append(result)
 
     def _refresh_payment_copies_output(self):
         has_payment_copies = bool(self._payment_copies_text().strip())
@@ -2328,6 +2356,8 @@ class SimplePaymentApp(QMainWindow):
             self.copy_payment_copies_btn.setEnabled(has_payment_copies)
         if hasattr(self, "view_payment_copies_btn"):
             self.view_payment_copies_btn.setEnabled(has_payment_copies)
+        if hasattr(self, "export_audit_pdf_btn"):
+            self.export_audit_pdf_btn.setEnabled(bool(self.last_approval_results))
 
     def _payment_copies_text(self):
         text = "\n\n".join(self.payment_copies_by_reference.values())
@@ -2384,6 +2414,48 @@ class SimplePaymentApp(QMainWindow):
 
         layout.addLayout(button_layout)
         dialog.exec()
+
+    def _export_approval_audit_pdf(self):
+        if not self.last_approval_results:
+            self.statusBar.showMessage("No approval audit results to export")
+            return
+
+        default_name = f"approval_audit_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+        default_path = os.path.join(os.path.expanduser("~"), "Downloads", default_name)
+        if not os.path.isdir(os.path.dirname(default_path)):
+            default_path = os.path.join(os.path.expanduser("~"), default_name)
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Approval Audit PDF",
+            default_path,
+            "PDF Files (*.pdf)",
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith(".pdf"):
+            file_path += ".pdf"
+
+        excel_file = ""
+        if hasattr(self, "approval_file_path_input"):
+            excel_file = self.approval_file_path_input.text().strip()
+        if not excel_file:
+            excel_file = self.file_path_input.text().strip()
+
+        report_html = build_approval_audit_html(
+            self.last_approval_results,
+            excel_file=os.path.basename(excel_file) if excel_file else "",
+            run_date=datetime.now().strftime("%d-%b-%Y %H:%M"),
+        )
+
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+        printer.setOutputFileName(file_path)
+
+        document = QTextDocument()
+        document.setHtml(report_html)
+        document.print(printer)
+        self.statusBar.showMessage(f"Approval audit PDF exported: {file_path}")
         
     def _handle_finished(self, result):
         if isinstance(result, dict):

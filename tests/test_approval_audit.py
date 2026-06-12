@@ -2,6 +2,7 @@ import unittest
 
 from approval_audit import (
     approval_template_name,
+    build_approval_audit_html,
     compare_payment_details,
     expected_to_bic,
     format_payment_copy,
@@ -244,6 +245,40 @@ class ApprovalAuditTests(unittest.TestCase):
         self.assertIn("To : IRVTUS3NXXX", text)
         self.assertIn("Interbank Settlement Amount", text)
         self.assertTrue(text.endswith("\n"))
+
+    def test_build_approval_audit_html_creates_styled_report(self):
+        html = build_approval_audit_html(
+            [
+                {
+                    "template": "APUSDPACS",
+                    "reference": "E008260612AOCYQL",
+                    "expected_amount": "1,721,621.07",
+                    "expected_date": "12.06.2026",
+                    "status": "Match",
+                    "details": "All checked fields match",
+                    "payment_copy": "APUSDPACS - E008260612AOCYQL\nPayment copy\nTo : IRVTUS3NXXX",
+                },
+                {
+                    "template": "APAUDPACS",
+                    "reference": "E008260612AOCYOF",
+                    "expected_amount": "12,365.33",
+                    "expected_date": "15.06.2026",
+                    "status": "Needs manual review",
+                    "details": "Amount mismatch <check>",
+                    "payment_copy": "",
+                },
+            ],
+            excel_file="Convera & CCT.xlsx",
+            run_date="12-Jun-2026 13:00",
+        )
+
+        self.assertIn("Approval Audit Pack", html)
+        self.assertIn("Convera &amp; CCT.xlsx", html)
+        self.assertIn("Total references</div><strong>2</strong>", html)
+        self.assertIn("Matches</div><strong>1</strong>", html)
+        self.assertIn("Manual reviews</div><strong>1</strong>", html)
+        self.assertIn("Amount mismatch &lt;check&gt;", html)
+        self.assertIn("To : IRVTUS3NXXX", html)
 
 
 if __name__ == "__main__":
