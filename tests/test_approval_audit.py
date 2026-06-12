@@ -274,17 +274,34 @@ class ApprovalAuditTests(unittest.TestCase):
                     "details": "Amount mismatch <check>",
                     "payment_copy": "",
                 },
+                {
+                    "template": "APCHFPACS",
+                    "reference": "E008260612AOCYOI",
+                    "expected_amount": "5,684.15",
+                    "expected_date": "15.06.2026",
+                    "status": "Match",
+                    "details": "All checked fields match",
+                    "payment_copy": "APCHFPACS - E008260612AOCYOI\nPayment copy\nTo : BOFACH2XXXX",
+                    "payment_copy_html": (
+                        '<div class="headerPrintView"><table><tr><td><pre><span style="FONT-WEIGHT: bold;">Unit'
+                        '</span></pre></td><td><pre>TGBP</pre></td></tr></table></div>'
+                        '<pre><span class="bodyStdLabelTrueType completeDataDisplay">From : TGBPUS3WXXX\n'
+                        'To : BOFACH2XXXX</span></pre>'
+                    ),
+                },
             ],
             excel_file="Convera & CCT.xlsx",
             run_date="12-Jun-2026 13:00",
         )
 
         self.assertIn("E008260612AOCYQL", html)
+        self.assertIn("E008260612AOCYOI", html)
         self.assertIn("To : IRVTUS3NXXX", html)
         self.assertIn("headerPrintView", html)
         self.assertIn("gtexchange-title", html)
         self.assertIn("border: 2px solid #4d4d4d", html)
         self.assertIn("background-color: #4f4f4f", html)
+        self.assertIn("page-break-before: always", html)
         self.assertNotIn("Approval Audit Pack", html)
         self.assertNotIn("Amount mismatch", html)
         self.assertNotIn("E008260612AOCYOF", html)

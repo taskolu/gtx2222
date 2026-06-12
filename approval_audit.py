@@ -153,9 +153,10 @@ def extract_gtexchange_print_view_html(raw_html, gtx_reference="", fallback_text
 def build_approval_audit_html(results, excel_file="", run_date=""):
     matched_results = [result for result in (results or []) if result.get("status") == "Match"]
     copy_sections = []
-    for result in matched_results:
+    for index, result in enumerate(matched_results):
+        section_style = ' style="page-break-before: always;"' if index else ""
         copy_sections.append(
-            '<section class="payment-section">'
+            f'<section class="payment-section"{section_style}>'
             + extract_gtexchange_print_view_html(
                 result.get("payment_copy_html", ""),
                 result.get("reference", ""),
@@ -170,7 +171,7 @@ def build_approval_audit_html(results, excel_file="", run_date=""):
   <meta charset="utf-8">
   <style>
     body {{ background: #ffffff; color: #333333; font-family: Arial, Helvetica, sans-serif; font-size: 10pt; margin: 0; }}
-    .payment-section {{ page-break-after: always; margin: 0 0 18px; padding: 0; }}
+    .payment-section {{ page-break-inside: avoid; margin: 0; padding: 0; }}
     .payment-section:last-child {{ page-break-after: auto; }}
     .gtexchange-copy {{ width: 100%; border: 2px solid #4d4d4d; }}
     .gtexchange-title {{ background-color: #4f4f4f; color: #ffffff; font-size: 11pt; padding: 7px 8px; }}
