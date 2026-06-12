@@ -1259,6 +1259,7 @@ class ApprovalAuditWorker(BrowserWorker):
                 page.goto("https://swift.gtxclient.converaextprod.net/web.uftc/message/search/search.message.faces")
 
         page.get_by_role("textbox", name="GTX Reference").wait_for(timeout=15000)
+        page.wait_for_timeout(500)
         self.signals.progress.emit("Search page ready")
 
     def _ensure_search_page(self, page):
@@ -1280,19 +1281,23 @@ class ApprovalAuditWorker(BrowserWorker):
         return None
 
     def _search_details_text(self, page, gtx_reference):
-        self._ensure_search_page(page)
+        self._open_search_page(page)
         self.signals.progress.emit(f"Searching GTX reference {gtx_reference}...")
-        page.get_by_role("textbox", name="GTX Reference").click()
-        page.get_by_role("textbox", name="GTX Reference").press("ControlOrMeta+a")
-        page.get_by_role("textbox", name="GTX Reference").fill(gtx_reference)
+        reference_input = page.get_by_role("textbox", name="GTX Reference")
+        reference_input.click()
+        page.wait_for_timeout(500)
+        reference_input.press("ControlOrMeta+a")
+        reference_input.fill(gtx_reference)
+        page.wait_for_timeout(500)
         page.get_by_role("button", name="Search").click()
-        page.get_by_role("link", name=gtx_reference).wait_for(timeout=15000)
+        page.get_by_role("link", name=gtx_reference).wait_for(timeout=30000)
         self.signals.progress.emit(f"Opening details for {gtx_reference}...")
         try:
-            page.get_by_role("link", name=gtx_reference).click(timeout=15000)
+            page.get_by_role("link", name=gtx_reference).click(timeout=30000)
         except Exception:
-            page.locator(f'a:has-text("{gtx_reference}")').first.click(timeout=15000)
-        page.locator("#container-body").wait_for(timeout=15000)
+            page.locator(f'a:has-text("{gtx_reference}")').first.click(timeout=30000)
+        page.locator("#container-body").wait_for(timeout=30000)
+        page.wait_for_timeout(500)
         self.signals.progress.emit(f"Reading details for {gtx_reference}...")
         return page.locator("#container-body").inner_text()
 
