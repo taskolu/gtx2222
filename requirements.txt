@@ -1,4 +1,5 @@
 pandas
 openpyxl
+pillow
 pyqt6
 playwright
