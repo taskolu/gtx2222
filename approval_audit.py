@@ -90,6 +90,16 @@ def parse_reference_lines(text):
     return references
 
 
+def format_payment_copy(template, gtx_reference, details_text):
+    details = str(details_text or "").strip()
+    return (
+        f"{template} - {gtx_reference}\n"
+        f"Payment copy\n"
+        f"{'-' * 72}\n"
+        f"{details}\n"
+    )
+
+
 def _first_match(pattern, text, flags=re.IGNORECASE):
     match = re.search(pattern, text, flags)
     return match.group(1).strip() if match else ""

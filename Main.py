@@ -16,7 +16,7 @@ from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, Q
 import re
 import subprocess
 import json
-from approval_audit import approval_template_name, compare_payment_details, parse_reference_lines
+from approval_audit import approval_template_name, compare_payment_details, format_payment_copy, parse_reference_lines
 from payment_mapping import (
     build_narrative,
     format_amount,
@@ -1345,6 +1345,11 @@ class ApprovalAuditWorker(BrowserWorker):
                     )
                     try:
                         details_text = self._search_details_text(page, approval_reference.reference)
+                        payment_copy = format_payment_copy(
+                            approval_reference.template,
+                            approval_reference.reference,
+                            details_text,
+                        )
                         payment = self._payment_for_reference(approval_reference, used_rows)
                         if not payment:
                             result = {
@@ -1354,6 +1359,7 @@ class ApprovalAuditWorker(BrowserWorker):
                                 "expected_date": "",
                                 "status": "Needs manual review",
                                 "details": "GTExchange details opened, but no matching Excel row found for this template",
+                                "payment_copy": payment_copy,
                             }
                             results.append(result)
                             self._emit_result_update(result)
@@ -1368,6 +1374,7 @@ class ApprovalAuditWorker(BrowserWorker):
                             "expected_date": payment.get("value_date", ""),
                             "status": audit_result.status,
                             "details": details,
+                            "payment_copy": payment_copy,
                         }
                         results.append(result)
                         self._emit_result_update(result)
@@ -1440,6 +1447,7 @@ class SimplePaymentApp(QMainWindow):
         self.summary_labels = {}
         self.status_spinner = None  # Will hold the status bar spinner
         self.last_error_message = ""
+        self.payment_copies_by_reference = {}
         
         # Setup UI
         self._setup_ui()
@@ -1730,6 +1738,21 @@ class SimplePaymentApp(QMainWindow):
         results_layout.setContentsMargins(14, 18, 14, 14)
         results_layout.setSpacing(10)
 
+        results_action_layout = QHBoxLayout()
+        results_action_layout.addStretch()
+        self.view_payment_copies_btn = QPushButton("View Payment Copies")
+        self.view_payment_copies_btn.setObjectName("secondaryButton")
+        self.view_payment_copies_btn.clicked.connect(self._show_payment_copies)
+        self.view_payment_copies_btn.setEnabled(False)
+        results_action_layout.addWidget(self.view_payment_copies_btn)
+
+        self.copy_payment_copies_btn = QPushButton("Copy Payment Copies")
+        self.copy_payment_copies_btn.setObjectName("secondaryButton")
+        self.copy_payment_copies_btn.clicked.connect(self._copy_payment_copies)
+        self.copy_payment_copies_btn.setEnabled(False)
+        results_action_layout.addWidget(self.copy_payment_copies_btn)
+        results_layout.addLayout(results_action_layout)
+
         self.approval_results_table = QTableWidget()
         self.approval_results_table.setColumnCount(6)
         self.approval_results_table.setHorizontalHeaderLabels([
@@ -1802,6 +1825,7 @@ class SimplePaymentApp(QMainWindow):
         # Clear existing data
         self.table_widget.setRowCount(0)
         self.payments_data = []
+        self._clear_payment_copies()
         
         # Expected columns with alternatives - each list contains valid alternatives for one column type
         required_columns = [
@@ -1985,6 +2009,7 @@ class SimplePaymentApp(QMainWindow):
             self.approval_file_path_input.clear()
         if hasattr(self, "approval_results_table"):
             self.approval_results_table.setRowCount(0)
+        self._clear_payment_copies()
         self.table_widget.setRowCount(0)
         self.payments_data = []
         self.start_btn.setEnabled(False)
@@ -2069,6 +2094,7 @@ class SimplePaymentApp(QMainWindow):
 
         self._update_value_dates_from_table()
         self._populate_approval_pending_results(approval_references)
+        self._clear_payment_copies()
         self.last_error_message = ""
         self.copy_error_btn.setEnabled(False)
 
@@ -2116,6 +2142,7 @@ class SimplePaymentApp(QMainWindow):
             try:
                 result = json.loads(message.split(":", 1)[1])
                 self._update_approval_result_row(result)
+                self._update_payment_copy_output(result)
             except Exception as exc:
                 self.statusBar.showMessage(f"Could not update approval result: {exc}")
             return
@@ -2269,11 +2296,101 @@ class SimplePaymentApp(QMainWindow):
             self.statusBar.showMessage("No automation error to copy")
             return
         self._copy_error_text(self.last_error_message, self.copy_error_btn)
+
+    def _clear_payment_copies(self):
+        self.payment_copies_by_reference = {}
+        if hasattr(self, "copy_payment_copies_btn"):
+            self.copy_payment_copies_btn.setEnabled(False)
+        if hasattr(self, "view_payment_copies_btn"):
+            self.view_payment_copies_btn.setEnabled(False)
+
+    def _populate_payment_copies(self, results):
+        self.payment_copies_by_reference = {}
+        for result in results:
+            payment_copy = str(result.get("payment_copy") or "").strip()
+            reference = str(result.get("reference") or "").strip()
+            if payment_copy and reference:
+                self.payment_copies_by_reference[reference] = payment_copy
+        self._refresh_payment_copies_output()
+
+    def _update_payment_copy_output(self, result):
+        payment_copy = str(result.get("payment_copy") or "").strip()
+        reference = str(result.get("reference") or "").strip()
+        if not payment_copy or not reference:
+            return
+
+        self.payment_copies_by_reference[reference] = payment_copy
+        self._refresh_payment_copies_output()
+
+    def _refresh_payment_copies_output(self):
+        has_payment_copies = bool(self._payment_copies_text().strip())
+        if hasattr(self, "copy_payment_copies_btn"):
+            self.copy_payment_copies_btn.setEnabled(has_payment_copies)
+        if hasattr(self, "view_payment_copies_btn"):
+            self.view_payment_copies_btn.setEnabled(has_payment_copies)
+
+    def _payment_copies_text(self):
+        text = "\n\n".join(self.payment_copies_by_reference.values())
+        if text:
+            text += "\n"
+        return text
+
+    def _copy_payment_copies(self):
+        text = self._payment_copies_text().strip()
+        if not text:
+            self.statusBar.showMessage("No payment copies to copy yet")
+            return
+
+        self._copy_error_text(
+            text + "\n",
+            self.copy_payment_copies_btn,
+            "Payment copies copied to clipboard",
+        )
+
+    def _show_payment_copies(self):
+        text = self._payment_copies_text().strip()
+        if not text:
+            self.statusBar.showMessage("No payment copies to view yet")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Payment Copies")
+        dialog.resize(820, 520)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        copies_text = QTextEdit()
+        copies_text.setReadOnly(True)
+        copies_text.setPlainText(text + "\n")
+        copies_text.selectAll()
+        layout.addWidget(copies_text)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        copy_btn = QPushButton("Copy Payment Copies")
+        copy_btn.setObjectName("secondaryButton")
+        copy_btn.clicked.connect(
+            lambda: self._copy_error_text(copies_text.toPlainText(), copy_btn, "Payment copies copied")
+        )
+        button_layout.addWidget(copy_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("secondaryButton")
+        close_btn.clicked.connect(dialog.accept)
+        button_layout.addWidget(close_btn)
+
+        layout.addLayout(button_layout)
+        dialog.exec()
         
     def _handle_finished(self, result):
         if isinstance(result, dict):
             if result.get("status") == "approval_audit":
-                self._populate_approval_results(result.get("results", []))
+                results = result.get("results", [])
+                self._populate_approval_results(results)
+                self._populate_payment_copies(results)
                 self.statusBar.showMessage(result.get("message", "Approval dry-run complete"))
                 self.header_status_label.setText("Audit complete")
                 self._cleanup_worker()

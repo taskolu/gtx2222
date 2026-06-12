@@ -4,6 +4,7 @@ from approval_audit import (
     approval_template_name,
     compare_payment_details,
     expected_to_bic,
+    format_payment_copy,
     normalize_date,
     parse_legacy_payment_details,
     parse_payment_details,
@@ -234,6 +235,15 @@ class ApprovalAuditTests(unittest.TestCase):
 
         self.assertEqual(result.status, "Match")
         self.assertEqual(result.issues, [])
+
+    def test_format_payment_copy_keeps_details_ready_for_email(self):
+        text = format_payment_copy("APUSDPACS", "E008260612AOCYQL", DETAILS_TEXT)
+
+        self.assertTrue(text.startswith("APUSDPACS - E008260612AOCYQL"))
+        self.assertIn("Payment copy", text)
+        self.assertIn("To : IRVTUS3NXXX", text)
+        self.assertIn("Interbank Settlement Amount", text)
+        self.assertTrue(text.endswith("\n"))
 
 
 if __name__ == "__main__":
