@@ -1268,13 +1268,14 @@ class ApprovalAuditWorker(BrowserWorker):
         except Exception:
             self._open_search_page(page)
 
-    def _payment_for_reference(self, approval_reference, used_rows):
+    def _payment_for_reference(self, approval_reference, used_rows, mark_used=True):
         for payment in self.payments_data:
             row_num = payment.get("row_num")
             if row_num in used_rows:
                 continue
             if payment.get("template") == approval_reference.template:
-                used_rows.add(row_num)
+                if mark_used:
+                    used_rows.add(row_num)
                 return payment
         return None
 
@@ -1285,6 +1286,7 @@ class ApprovalAuditWorker(BrowserWorker):
         page.get_by_role("textbox", name="GTX Reference").press("ControlOrMeta+a")
         page.get_by_role("textbox", name="GTX Reference").fill(gtx_reference)
         page.get_by_role("button", name="Search").click()
+        page.get_by_role("link", name=gtx_reference).wait_for(timeout=15000)
         self.signals.progress.emit(f"Opening details for {gtx_reference}...")
         try:
             page.get_by_role("link", name=gtx_reference).click(timeout=15000)
@@ -1316,23 +1318,23 @@ class ApprovalAuditWorker(BrowserWorker):
                     if not self.is_running:
                         break
 
-                    payment = self._payment_for_reference(approval_reference, used_rows)
-                    if not payment:
-                        results.append({
-                            "template": approval_reference.template,
-                            "reference": approval_reference.reference,
-                            "expected_amount": "",
-                            "expected_date": "",
-                            "status": "Needs manual review",
-                            "details": "No matching Excel row found for this template",
-                        })
-                        continue
-
                     self.signals.progress.emit(
                         f"Dry-run audit {index}/{len(self.approval_references)}: {approval_reference.reference}"
                     )
                     try:
                         details_text = self._search_details_text(page, approval_reference.reference)
+                        payment = self._payment_for_reference(approval_reference, used_rows)
+                        if not payment:
+                            results.append({
+                                "template": approval_reference.template,
+                                "reference": approval_reference.reference,
+                                "expected_amount": "",
+                                "expected_date": "",
+                                "status": "Needs manual review",
+                                "details": "GTExchange details opened, but no matching Excel row found for this template",
+                            })
+                            continue
+
                         audit_result = compare_payment_details(payment, approval_reference.reference, details_text)
                         details = "; ".join(audit_result.issues) if audit_result.issues else "All checked fields match"
                         results.append({
@@ -1344,11 +1346,12 @@ class ApprovalAuditWorker(BrowserWorker):
                             "details": details,
                         })
                     except Exception as exc:
+                        payment = self._payment_for_reference(approval_reference, used_rows, mark_used=False)
                         results.append({
                             "template": approval_reference.template,
                             "reference": approval_reference.reference,
-                            "expected_amount": f"{payment.get('amount', 0):,.2f}",
-                            "expected_date": payment.get("value_date", ""),
+                            "expected_amount": f"{payment.get('amount', 0):,.2f}" if payment else "",
+                            "expected_date": payment.get("value_date", "") if payment else "",
                             "status": "Needs manual review",
                             "details": f"Search/read failed: {exc}",
                         })
