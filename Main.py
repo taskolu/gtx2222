@@ -9,12 +9,13 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QGroupBox, QStatusBar, QGridLayout, QCheckBox,
     QCalendarWidget, QScrollArea, QDialog, QFrame, QStyle, QAbstractItemView,
-    QTextEdit
+    QTextEdit, QTabWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QDate, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter, QBrush
 import re
 import subprocess
+from approval_audit import compare_payment_details, parse_reference_lines
 from payment_mapping import (
     build_narrative,
     format_amount,
@@ -1180,6 +1181,146 @@ class BrowserWorker(QObject):
             
         return target_date.strftime("%d.%m.%Y")
 
+
+class ApprovalAuditWorker(BrowserWorker):
+    def __init__(self, username, password, approval_references, payments_data):
+        super().__init__(username, password, "", payments_data)
+        self.approval_references = approval_references
+
+    def _launch_page(self, playwright):
+        launch_options = get_browser_launch_options()
+        use_cdp = launch_options.pop("use_cdp", False)
+        use_persistent_context = launch_options.pop("use_persistent_context", False)
+        cdp_process = None
+        if "executable_path" in launch_options:
+            self.signals.progress.emit(f"Launching bundled browser: {launch_options['executable_path']}")
+        else:
+            self.signals.progress.emit("Launching installed Microsoft Edge")
+
+        if use_cdp:
+            browser, context, page, cdp_process = self._launch_bundled_edge_over_cdp(playwright, launch_options)
+        elif use_persistent_context:
+            user_data_dir = tempfile.mkdtemp(prefix="gtx_playwright_edge_")
+            context = playwright.chromium.launch_persistent_context(user_data_dir, **launch_options)
+            browser = None
+            page = context.pages[0] if context.pages else context.new_page()
+        else:
+            browser = playwright.chromium.launch(**launch_options)
+            context = browser.new_context()
+            page = context.new_page()
+        return browser, context, page, cdp_process
+
+    def _login(self, page):
+        self.signals.progress.emit("Navigating to login page...")
+        page.goto("https://swift.gtxclient.converaextprod.net/web.uftc/standard.login.faces")
+        self.signals.progress.emit("Entering credentials...")
+        page.get_by_role("textbox", name="Enter your user name").click()
+        page.get_by_role("textbox", name="Enter your user name").fill(self.username)
+        page.locator("[id=\"userloginform\\:password\"]").click()
+        page.locator("[id=\"userloginform\\:password\"]").fill(self.password)
+        page.get_by_role("button", name="Log in").click()
+        self._handle_license_popup(page)
+        self.signals.progress.emit("Please enter OTP manually and complete login")
+        page.wait_for_selector('span:has-text("You are connected to GTExchange")', timeout=180000)
+        self._handle_license_popup(page)
+
+    def _payment_for_reference(self, approval_reference, used_rows):
+        for payment in self.payments_data:
+            row_num = payment.get("row_num")
+            if row_num in used_rows:
+                continue
+            if payment.get("template") == approval_reference.template:
+                used_rows.add(row_num)
+                return payment
+        return None
+
+    def _search_details_text(self, page, gtx_reference):
+        page.get_by_role("link", name="Search").click()
+        page.get_by_role("textbox", name="GTX Reference").click()
+        page.get_by_role("textbox", name="GTX Reference").press("ControlOrMeta+a")
+        page.get_by_role("textbox", name="GTX Reference").fill(gtx_reference)
+        page.get_by_role("button", name="Search").click()
+        page.get_by_role("link", name=gtx_reference).click()
+        page.locator("#container-body").wait_for(timeout=15000)
+        return page.locator("#container-body").inner_text()
+
+    def run(self):
+        if not PLAYWRIGHT_AVAILABLE:
+            self.signals.error.emit("Playwright not installed. Run: pip install playwright")
+            return
+
+        browser = None
+        context = None
+        cdp_process = None
+        results = []
+        used_rows = set()
+
+        try:
+            self.signals.progress.emit("Starting approval dry-run audit...")
+            with sync_playwright() as p:
+                browser, context, page, cdp_process = self._launch_page(p)
+                self._login(page)
+
+                for index, approval_reference in enumerate(self.approval_references, start=1):
+                    if not self.is_running:
+                        break
+
+                    payment = self._payment_for_reference(approval_reference, used_rows)
+                    if not payment:
+                        results.append({
+                            "template": approval_reference.template,
+                            "reference": approval_reference.reference,
+                            "expected_amount": "",
+                            "expected_date": "",
+                            "status": "Needs manual review",
+                            "details": "No matching Excel row found for this template",
+                        })
+                        continue
+
+                    self.signals.progress.emit(
+                        f"Dry-run audit {index}/{len(self.approval_references)}: {approval_reference.reference}"
+                    )
+                    try:
+                        details_text = self._search_details_text(page, approval_reference.reference)
+                        audit_result = compare_payment_details(payment, approval_reference.reference, details_text)
+                        details = "; ".join(audit_result.issues) if audit_result.issues else "All checked fields match"
+                        results.append({
+                            "template": approval_reference.template,
+                            "reference": approval_reference.reference,
+                            "expected_amount": f"{payment.get('amount', 0):,.2f}",
+                            "expected_date": payment.get("value_date", ""),
+                            "status": audit_result.status,
+                            "details": details,
+                        })
+                    except Exception as exc:
+                        results.append({
+                            "template": approval_reference.template,
+                            "reference": approval_reference.reference,
+                            "expected_amount": f"{payment.get('amount', 0):,.2f}",
+                            "expected_date": payment.get("value_date", ""),
+                            "status": "Needs manual review",
+                            "details": f"Search/read failed: {exc}",
+                        })
+
+                self.signals.finished.emit({
+                    "status": "approval_audit",
+                    "message": f"Approval dry-run complete: {len(results)} references checked",
+                    "results": results,
+                })
+        except Exception as exc:
+            self.signals.error.emit(f"Approval audit error: {exc}")
+        finally:
+            try:
+                if context:
+                    context.close()
+                if browser:
+                    browser.close()
+                if cdp_process and cdp_process.poll() is None:
+                    cdp_process.terminate()
+            except Exception:
+                pass
+
+
 # Main application window
 class SimplePaymentApp(QMainWindow):
     # Class variable for storing the original window title
@@ -1285,6 +1426,14 @@ class SimplePaymentApp(QMainWindow):
         header_layout.addWidget(self.readme_btn)
         header_layout.addWidget(self.copy_error_btn)
         header_layout.addWidget(self.dark_mode_toggle)
+
+        self.workflow_tabs = QTabWidget()
+        self.workflow_tabs.setObjectName("workflowTabs")
+        entry_tab = QWidget()
+        entry_tab.setObjectName("entryTab")
+        entry_layout = QVBoxLayout(entry_tab)
+        entry_layout.setContentsMargins(0, 0, 0, 0)
+        entry_layout.setSpacing(12)
         
         # Create compact setup area
         setup_layout = QHBoxLayout()
@@ -1418,10 +1567,15 @@ class SimplePaymentApp(QMainWindow):
         start_btn_layout.setAlignment(self.start_spinner, Qt.AlignmentFlag.AlignVCenter)
         
         # Add widgets to main layout
+        entry_layout.addLayout(setup_layout)
+        entry_layout.addWidget(data_group)
+        entry_layout.addLayout(start_btn_layout)
+
+        self.workflow_tabs.addTab(entry_tab, "Payment Entry")
+        self.workflow_tabs.addTab(self._build_approval_tab(), "Approval Audit")
+
         main_layout.addWidget(header_frame)
-        main_layout.addLayout(setup_layout)
-        main_layout.addWidget(data_group)
-        main_layout.addLayout(start_btn_layout)
+        main_layout.addWidget(self.workflow_tabs)
         
         # Status bar with better styling
         self.statusBar = QStatusBar()
@@ -1436,6 +1590,53 @@ class SimplePaymentApp(QMainWindow):
         
         # Load saved credentials if available
         self._load_credentials()
+
+    def _build_approval_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        refs_group = QGroupBox("Approval References")
+        refs_layout = QVBoxLayout(refs_group)
+        refs_layout.setContentsMargins(14, 18, 14, 14)
+        refs_layout.setSpacing(10)
+
+        self.approval_refs_input = QTextEdit()
+        self.approval_refs_input.setPlaceholderText("APAUDPACS: E008260612AOCYOF\nAPCHFPACS: E008260612AOCYOI")
+        self.approval_refs_input.setMinimumHeight(110)
+        refs_layout.addWidget(self.approval_refs_input)
+
+        action_layout = QHBoxLayout()
+        action_layout.addStretch()
+        self.approval_audit_btn = QPushButton("Run Dry Audit")
+        self.approval_audit_btn.setObjectName("primaryButton")
+        self.approval_audit_btn.clicked.connect(self._start_approval_audit)
+        action_layout.addWidget(self.approval_audit_btn)
+        refs_layout.addLayout(action_layout)
+
+        results_group = QGroupBox("Audit Results")
+        results_layout = QVBoxLayout(results_group)
+        results_layout.setContentsMargins(14, 18, 14, 14)
+        results_layout.setSpacing(10)
+
+        self.approval_results_table = QTableWidget()
+        self.approval_results_table.setColumnCount(6)
+        self.approval_results_table.setHorizontalHeaderLabels([
+            "Template", "GTX Reference", "Expected Amount", "Value Date", "Result", "Details"
+        ])
+        self.approval_results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.approval_results_table.setAlternatingRowColors(True)
+        self.approval_results_table.verticalHeader().setVisible(False)
+        self.approval_results_table.setShowGrid(False)
+        self.approval_results_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.approval_results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.approval_results_table.setWordWrap(False)
+        results_layout.addWidget(self.approval_results_table)
+
+        layout.addWidget(refs_group)
+        layout.addWidget(results_group)
+        return tab
     
     def _browse_and_load(self):
         default_folder = os.path.join(os.path.expanduser("~"), "Downloads")
@@ -1708,6 +1909,48 @@ class SimplePaymentApp(QMainWindow):
         
         # Start the thread
         self.worker_thread.start()
+
+    def _start_approval_audit(self):
+        if not self.payments_data:
+            self.statusBar.showMessage("Error: Load the Excel file before running approval audit")
+            return
+
+        approval_references = parse_reference_lines(self.approval_refs_input.toPlainText())
+        if not approval_references:
+            self.statusBar.showMessage("Error: Paste approval references before running audit")
+            return
+
+        username = self.username_input.text()
+        password = self.password_input.text()
+        if not username or not password:
+            self.statusBar.showMessage("Error: Username and password are required")
+            return
+
+        self._update_value_dates_from_table()
+        self.approval_results_table.setRowCount(0)
+        self.last_error_message = ""
+        self.copy_error_btn.setEnabled(False)
+
+        self.username_input.setEnabled(False)
+        self.password_input.setEnabled(False)
+        self.remember_checkbox.setEnabled(False)
+        self.browse_btn.setEnabled(False)
+        self.clear_btn.setEnabled(False)
+        self.start_btn.setEnabled(False)
+        self.approval_audit_btn.setEnabled(False)
+
+        self.status_spinner.setVisible(True)
+        self.status_spinner.start_spinning()
+        self.header_status_label.setText("Audit running")
+
+        self.worker = ApprovalAuditWorker(username, password, approval_references, self.payments_data)
+        self.worker_thread = QThread()
+        self.worker.moveToThread(self.worker_thread)
+        self.worker.signals.progress.connect(self._update_progress)
+        self.worker.signals.error.connect(self._handle_error)
+        self.worker.signals.finished.connect(self._handle_finished)
+        self.worker_thread.started.connect(self.worker.run)
+        self.worker_thread.start()
     
     def _update_value_dates_from_table(self):
         """Update the payment data with user-edited value dates from the table"""
@@ -1750,7 +1993,8 @@ class SimplePaymentApp(QMainWindow):
         # Regular progress message
         self.statusBar.showMessage(message)
         if hasattr(self, "header_status_label"):
-            self.header_status_label.setText("Running" if self.worker else "Ready")
+            running_text = "Audit running" if isinstance(self.worker, ApprovalAuditWorker) else "Running"
+            self.header_status_label.setText(running_text if self.worker else "Ready")
         QApplication.processEvents()  # Process UI events to update immediately
     
     def _table_row_for_payment(self, row_num):
@@ -1784,6 +2028,12 @@ class SimplePaymentApp(QMainWindow):
             status_item = self.table_widget.item(row, 4)
             status = status_item.text().strip() if status_item else ""
             self._apply_row_status_style(row, status)
+
+        if hasattr(self, "approval_results_table"):
+            for row in range(self.approval_results_table.rowCount()):
+                status_item = self.approval_results_table.item(row, 4)
+                status = status_item.text().strip() if status_item else ""
+                self._apply_approval_result_style(row, status)
 
     def _update_payment_status(self, row_num, status):
         """Update the status of a specific payment in the table."""
@@ -1871,6 +2121,13 @@ class SimplePaymentApp(QMainWindow):
         
     def _handle_finished(self, result):
         if isinstance(result, dict):
+            if result.get("status") == "approval_audit":
+                self._populate_approval_results(result.get("results", []))
+                self.statusBar.showMessage(result.get("message", "Approval dry-run complete"))
+                self.header_status_label.setText("Audit complete")
+                self._cleanup_worker()
+                return
+
             message = result.get("message", "Automation completed")
             payment_references = result.get("payment_references", {})
             
@@ -1889,6 +2146,37 @@ class SimplePaymentApp(QMainWindow):
             
         self._cleanup_worker()
         self._update_summary()
+
+    def _populate_approval_results(self, results):
+        self.approval_results_table.setRowCount(0)
+        for result in results:
+            row = self.approval_results_table.rowCount()
+            self.approval_results_table.insertRow(row)
+            values = [
+                result.get("template", ""),
+                result.get("reference", ""),
+                result.get("expected_amount", ""),
+                result.get("expected_date", ""),
+                result.get("status", ""),
+                result.get("details", ""),
+            ]
+            for col, value in enumerate(values):
+                self.approval_results_table.setItem(row, col, QTableWidgetItem(str(value)))
+            self._apply_approval_result_style(row, result.get("status", ""))
+
+    def _apply_approval_result_style(self, row, status):
+        if status == "Match":
+            bg_color = QColor(24, 84, 58) if self.dark_mode else QColor(222, 247, 232)
+            text_color = QColor(235, 255, 244) if self.dark_mode else QColor(18, 83, 48)
+        else:
+            bg_color = QColor(112, 42, 48) if self.dark_mode else QColor(255, 226, 226)
+            text_color = QColor(255, 241, 241) if self.dark_mode else QColor(126, 30, 30)
+
+        for col in range(self.approval_results_table.columnCount()):
+            item = self.approval_results_table.item(row, col)
+            if item:
+                item.setBackground(QBrush(bg_color))
+                item.setForeground(QBrush(text_color))
         
     def _cleanup_worker(self):
         # Stop spinners
@@ -1903,7 +2191,9 @@ class SimplePaymentApp(QMainWindow):
         self.remember_checkbox.setEnabled(True)
         self.browse_btn.setEnabled(True)
         self.clear_btn.setEnabled(True)
-        self.start_btn.setEnabled(True)
+        self.start_btn.setEnabled(bool(self.payments_data))
+        if hasattr(self, "approval_audit_btn"):
+            self.approval_audit_btn.setEnabled(True)
         
         # Clean up thread
         if self.worker_thread and self.worker_thread.isRunning():
@@ -2314,6 +2604,26 @@ class SimplePaymentApp(QMainWindow):
                     border-color: #3b4450;
                     color: #8c96a3;
                 }
+                QTabWidget::pane {
+                    border: none;
+                    background-color: transparent;
+                    margin-top: 8px;
+                }
+                QTabBar::tab {
+                    background-color: #272c34;
+                    color: #cbd5e1;
+                    border: 1px solid #3a414c;
+                    border-bottom-color: #3a414c;
+                    padding: 8px 14px;
+                    margin-right: 4px;
+                    border-top-left-radius: 5px;
+                    border-top-right-radius: 5px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #13795b;
+                    color: #ffffff;
+                    border-color: #13795b;
+                }
                 QTableWidget {
                     background-color: #20252d;
                     alternate-background-color: #252b34;
@@ -2491,6 +2801,26 @@ class SimplePaymentApp(QMainWindow):
                     background-color: #d9e2ec;
                     border-color: #d9e2ec;
                     color: #8a98a8;
+                }
+                QTabWidget::pane {
+                    border: none;
+                    background-color: transparent;
+                    margin-top: 8px;
+                }
+                QTabBar::tab {
+                    background-color: #ffffff;
+                    color: #334e68;
+                    border: 1px solid #d9e2ec;
+                    border-bottom-color: #d9e2ec;
+                    padding: 8px 14px;
+                    margin-right: 4px;
+                    border-top-left-radius: 5px;
+                    border-top-right-radius: 5px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #1f7a4d;
+                    color: #ffffff;
+                    border-color: #1f7a4d;
                 }
                 QTableWidget {
                     background-color: #ffffff;
