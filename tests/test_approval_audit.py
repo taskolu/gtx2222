@@ -175,6 +175,23 @@ class ApprovalAuditTests(unittest.TestCase):
         self.assertEqual(approval_template_name(payment), "APCHFPACS")
         self.assertEqual(expected_to_bic(payment), "BOFACH2XXXX")
 
+    def test_legacy_payment_returns_concise_manual_review(self):
+        payment = {
+            "amount": 100,
+            "source_code": "CZKCUKKOM",
+            "template": "APFUNDINGCZK",
+            "uses_pacs_flow": False,
+            "unit": "CCT_CHUK",
+            "reference": "CO5590",
+            "otr_number": "OTR1",
+            "value_date": "12.06.2026",
+        }
+
+        result = compare_payment_details(payment, "E101260612AOCYQW", "To : CEKOCZPPXXX")
+
+        self.assertEqual(result.status, "Needs manual review")
+        self.assertEqual(result.issues, ["Legacy/non-pacs template details opened; manual review required"])
+
 
 if __name__ == "__main__":
     unittest.main()

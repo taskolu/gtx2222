@@ -1239,26 +1239,33 @@ class ApprovalAuditWorker(BrowserWorker):
     def _open_search_page(self, page):
         self.signals.progress.emit("Opening Messages menu...")
         try:
-            page.get_by_role("link", name="Messages").click(timeout=10000)
+            page.get_by_role("link", name="Messages").click(timeout=15000)
         except Exception as messages_exc:
             self.signals.progress.emit(f"Messages menu click fallback: {messages_exc}")
             try:
-                page.locator('a:has-text("Messages")').first.click(timeout=10000)
+                page.locator('a:has-text("Messages")').first.click(timeout=15000)
             except Exception as fallback_exc:
                 self.signals.progress.emit(f"Messages fallback failed: {fallback_exc}")
 
+        page.wait_for_timeout(1000)
         self.signals.progress.emit("Opening Search Messages page...")
         try:
-            page.get_by_role("link", name="Search Messages").click(timeout=10000)
+            search_messages_link = page.get_by_role("link", name="Search Messages")
+            search_messages_link.wait_for(timeout=30000)
+            page.wait_for_timeout(500)
+            search_messages_link.click(timeout=15000)
         except Exception as search_exc:
             self.signals.progress.emit(f"Search Messages click fallback: {search_exc}")
             try:
-                page.locator('a:has-text("Search Messages")').first.click(timeout=10000)
+                fallback_link = page.locator('a:has-text("Search Messages")').first
+                fallback_link.wait_for(timeout=30000)
+                page.wait_for_timeout(500)
+                fallback_link.click(timeout=15000)
             except Exception as fallback_exc:
                 self.signals.progress.emit(f"Direct Search Messages URL fallback: {fallback_exc}")
                 page.goto("https://swift.gtxclient.converaextprod.net/web.uftc/message/search/search.message.faces")
 
-        page.get_by_role("textbox", name="GTX Reference").wait_for(timeout=15000)
+        page.get_by_role("textbox", name="GTX Reference").wait_for(timeout=30000)
         page.wait_for_timeout(500)
         self.signals.progress.emit("Search page ready")
 

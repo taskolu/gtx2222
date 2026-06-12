@@ -211,6 +211,16 @@ def compare_payment_details(payment, gtx_reference, details_text):
     expected_date = normalize_date(payment.get("value_date"))
     currency = expected_currency(payment)
     expected_narrative = build_narrative(payment.get("reference", "CO5590"), payment.get("otr_number", ""))
+    if not payment.get("uses_pacs_flow", True):
+        expected_bic = expected_to_bic(payment)
+        if expected_bic and parsed.to_bic and parsed.to_bic != expected_bic:
+            issues.append(f"To BIC mismatch: expected {expected_bic}, found {parsed.to_bic}")
+        issues.append("Legacy/non-pacs template details opened; manual review required")
+        return AuditResult(
+            status="Needs manual review",
+            issues=issues,
+            parsed=parsed,
+        )
 
     required_fields = {
         "unit": parsed.unit,
