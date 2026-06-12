@@ -41,9 +41,10 @@ def get_bundled_browser_executable(base_path=None):
     chromium_dirs.extend(("chromium-1179", "chromium-1148"))
 
     for chromium_dir in chromium_dirs:
-        executable = os.path.join(browser_root, chromium_dir, "chrome-win", "chrome.exe")
-        if os.path.exists(executable):
-            return executable
+        for chrome_dir in ("chrome-win64", "chrome-win"):
+            executable = os.path.join(browser_root, chromium_dir, chrome_dir, "chrome.exe")
+            if os.path.exists(executable):
+                return executable
 
     edge_executable = os.path.join(browser_root, "msedge", "Application", "msedge.exe")
     if os.path.exists(edge_executable):

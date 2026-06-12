@@ -59,6 +59,17 @@ class BrowserLaunchTests(unittest.TestCase):
 
         self.assertEqual(executable, "browsers/chromium-9999/chrome-win/chrome.exe")
 
+    def test_finds_chrome_for_testing_win64_layout(self):
+        def fake_exists(path):
+            return path == "browsers/chromium-1223/chrome-win64/chrome.exe"
+
+        with patch("browser_launch.os.path.isdir", return_value=True), \
+                patch("browser_launch.os.listdir", return_value=["chromium-1223"]), \
+                patch("browser_launch.os.path.exists", side_effect=fake_exists):
+            executable = browser_launch.get_bundled_browser_executable("browsers")
+
+        self.assertEqual(executable, "browsers/chromium-1223/chrome-win64/chrome.exe")
+
     def test_bundled_edge_uses_cdp_launch(self):
         def fake_exists(path):
             return path.replace("./", "") == "browsers/msedge/Application/msedge.exe"
