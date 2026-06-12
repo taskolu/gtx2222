@@ -1712,7 +1712,15 @@ class SimplePaymentApp(QMainWindow):
         self.approval_results_table.setHorizontalHeaderLabels([
             "Template", "GTX Reference", "Expected Amount", "Value Date", "Result", "Details"
         ])
-        self.approval_results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        approval_header = self.approval_results_table.horizontalHeader()
+        for col in range(5):
+            approval_header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
+        approval_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        self.approval_results_table.setColumnWidth(0, 95)
+        self.approval_results_table.setColumnWidth(1, 130)
+        self.approval_results_table.setColumnWidth(2, 105)
+        self.approval_results_table.setColumnWidth(3, 85)
+        self.approval_results_table.setColumnWidth(4, 115)
         self.approval_results_table.setAlternatingRowColors(True)
         self.approval_results_table.verticalHeader().setVisible(False)
         self.approval_results_table.setShowGrid(False)
