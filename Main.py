@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QTextEdit, QTabWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QDate, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter, QBrush
+from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter, QBrush, QKeySequence, QShortcut
 import re
 import subprocess
 from approval_audit import approval_template_name, compare_payment_details, parse_reference_lines
@@ -1732,13 +1732,21 @@ class SimplePaymentApp(QMainWindow):
         self.approval_results_table.verticalHeader().setVisible(False)
         self.approval_results_table.setShowGrid(False)
         self.approval_results_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.approval_results_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.approval_results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.approval_results_table.setWordWrap(False)
+        self.approval_results_table.setMinimumHeight(320)
+        self.approval_select_all_shortcut = QShortcut(QKeySequence.StandardKey.SelectAll, self.approval_results_table)
+        self.approval_select_all_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.approval_select_all_shortcut.activated.connect(self.approval_results_table.selectAll)
+        self.approval_copy_shortcut = QShortcut(QKeySequence.StandardKey.Copy, self.approval_results_table)
+        self.approval_copy_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.approval_copy_shortcut.activated.connect(self._copy_approval_results_selection)
         results_layout.addWidget(self.approval_results_table)
 
-        layout.addWidget(excel_group)
-        layout.addWidget(refs_group)
-        layout.addWidget(results_group)
+        layout.addWidget(excel_group, 0)
+        layout.addWidget(refs_group, 0)
+        layout.addWidget(results_group, 2)
         return tab
     
     def _browse_and_load(self):
@@ -2280,6 +2288,40 @@ class SimplePaymentApp(QMainWindow):
             for col, value in enumerate(values):
                 self.approval_results_table.setItem(row, col, QTableWidgetItem(str(value)))
             self._apply_approval_result_style(row, result.get("status", ""))
+
+    def _copy_approval_results_selection(self):
+        if not hasattr(self, "approval_results_table"):
+            return
+
+        table = self.approval_results_table
+        selected_indexes = table.selectedIndexes()
+        if selected_indexes:
+            rows = sorted({index.row() for index in selected_indexes})
+            cols = sorted({index.column() for index in selected_indexes})
+        else:
+            rows = list(range(table.rowCount()))
+            cols = list(range(table.columnCount()))
+
+        if not rows or not cols:
+            self.statusBar.showMessage("No approval results to copy")
+            return
+
+        lines = []
+        headers = []
+        for col in cols:
+            header_item = table.horizontalHeaderItem(col)
+            headers.append(header_item.text() if header_item else "")
+        lines.append("\t".join(headers))
+
+        for row in rows:
+            values = []
+            for col in cols:
+                item = table.item(row, col)
+                values.append(item.text() if item else "")
+            lines.append("\t".join(values))
+
+        QApplication.clipboard().setText("\n".join(lines))
+        self.statusBar.showMessage(f"Copied {len(rows)} approval result rows")
 
     def _apply_approval_result_style(self, row, status):
         if status == "Match":
