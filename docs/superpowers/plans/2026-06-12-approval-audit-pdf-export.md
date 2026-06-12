@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add an HTML-styled one-file PDF export for approval dry audit evidence.
+**Goal:** Add an HTML-styled one-file PDF export for matched GTExchange payment copies.
 
-**Architecture:** Build the audit report HTML in `approval_audit.py` so it is unit-testable without PyQt. In `Main.py`, keep the current dry audit flow and add an `Export Audit PDF` button that renders the stored audit results through `QTextDocument` and `QPrinter`.
+**Architecture:** Build the GTExchange print-view HTML in `approval_audit.py` so it is unit-testable without PyQt. In `Main.py`, keep the current dry audit flow and add an `Export Matched Copies PDF` button that renders only matched audit results through `QTextDocument` and `QPrinter`.
 
 **Tech Stack:** Python, PyQt6 `QTextDocument`, PyQt6 `QPrinter`, existing unittest suite.
 
@@ -16,8 +16,8 @@
 - Modify: `approval_audit.py`
 - Modify: `tests/test_approval_audit.py`
 
-- [ ] Add a failing unit test for `build_approval_audit_html` that checks title, summary counts, escaped text, and payment copy content.
-- [ ] Implement `build_approval_audit_html(results, excel_file="", run_date="")` using `html.escape` and inline CSS.
+- [ ] Add a failing unit test for `build_approval_audit_html` that checks only matched rows are included and GTExchange print-view content is preserved.
+- [ ] Implement `extract_gtexchange_print_view_html(...)` and `build_approval_audit_html(...)` using sanitized GTExchange print-view HTML and inline CSS.
 - [ ] Run `python3 -m unittest tests.test_approval_audit.ApprovalAuditTests.test_build_approval_audit_html_creates_styled_report` and verify pass.
 
 ### Task 2: Wire PDF Export UI
@@ -27,9 +27,10 @@
 
 - [ ] Add imports for `QTextDocument` and `QPrinter`.
 - [ ] Track `self.last_approval_results` after live/final audit updates.
-- [ ] Add `Export Audit PDF` next to the approval copy/view buttons.
+- [ ] Capture `#container-body` HTML during each approval detail search.
+- [ ] Add `Export Matched Copies PDF` next to the approval copy/view buttons.
 - [ ] Implement `_export_approval_audit_pdf` using `QFileDialog.getSaveFileName`, `QPrinter.PdfFormat`, and `QTextDocument.print`.
-- [ ] Enable the export button only when results exist.
+- [ ] Enable the export button only when matched results exist.
 
 ### Task 3: Verify And Commit
 

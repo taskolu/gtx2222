@@ -1305,7 +1305,7 @@ class ApprovalAuditWorker(BrowserWorker):
                 return payment
         return None
 
-    def _search_details_text(self, page, gtx_reference):
+    def _search_details(self, page, gtx_reference):
         self._open_search_page(page)
         self.signals.progress.emit(f"Searching GTX reference {gtx_reference}...")
         reference_input = page.get_by_role("textbox", name="GTX Reference")
@@ -1324,7 +1324,14 @@ class ApprovalAuditWorker(BrowserWorker):
         page.locator("#container-body").wait_for(timeout=30000)
         page.wait_for_timeout(500)
         self.signals.progress.emit(f"Reading details for {gtx_reference}...")
-        return page.locator("#container-body").inner_text()
+        details_locator = page.locator("#container-body")
+        return {
+            "text": details_locator.inner_text(),
+            "html": details_locator.inner_html(),
+        }
+
+    def _search_details_text(self, page, gtx_reference):
+        return self._search_details(page, gtx_reference)["text"]
 
     def run(self):
         if not PLAYWRIGHT_AVAILABLE:
@@ -1351,7 +1358,9 @@ class ApprovalAuditWorker(BrowserWorker):
                         f"Dry-run audit {index}/{len(self.approval_references)}: {approval_reference.reference}"
                     )
                     try:
-                        details_text = self._search_details_text(page, approval_reference.reference)
+                        details = self._search_details(page, approval_reference.reference)
+                        details_text = details["text"]
+                        details_html = details["html"]
                         payment_copy = format_payment_copy(
                             approval_reference.template,
                             approval_reference.reference,
@@ -1367,6 +1376,7 @@ class ApprovalAuditWorker(BrowserWorker):
                                 "status": "Needs manual review",
                                 "details": "GTExchange details opened, but no matching Excel row found for this template",
                                 "payment_copy": payment_copy,
+                                "payment_copy_html": details_html,
                             }
                             results.append(result)
                             self._emit_result_update(result)
@@ -1382,6 +1392,7 @@ class ApprovalAuditWorker(BrowserWorker):
                             "status": audit_result.status,
                             "details": details,
                             "payment_copy": payment_copy,
+                            "payment_copy_html": details_html,
                         }
                         results.append(result)
                         self._emit_result_update(result)
@@ -1760,7 +1771,7 @@ class SimplePaymentApp(QMainWindow):
         self.copy_payment_copies_btn.setEnabled(False)
         results_action_layout.addWidget(self.copy_payment_copies_btn)
 
-        self.export_audit_pdf_btn = QPushButton("Export Audit PDF")
+        self.export_audit_pdf_btn = QPushButton("Export Matched Copies PDF")
         self.export_audit_pdf_btn.setObjectName("secondaryButton")
         self.export_audit_pdf_btn.clicked.connect(self._export_approval_audit_pdf)
         self.export_audit_pdf_btn.setEnabled(False)
@@ -2357,7 +2368,10 @@ class SimplePaymentApp(QMainWindow):
         if hasattr(self, "view_payment_copies_btn"):
             self.view_payment_copies_btn.setEnabled(has_payment_copies)
         if hasattr(self, "export_audit_pdf_btn"):
-            self.export_audit_pdf_btn.setEnabled(bool(self.last_approval_results))
+            self.export_audit_pdf_btn.setEnabled(self._has_matched_approval_results())
+
+    def _has_matched_approval_results(self):
+        return any(result.get("status") == "Match" for result in self.last_approval_results)
 
     def _payment_copies_text(self):
         text = "\n\n".join(self.payment_copies_by_reference.values())
@@ -2416,11 +2430,12 @@ class SimplePaymentApp(QMainWindow):
         dialog.exec()
 
     def _export_approval_audit_pdf(self):
-        if not self.last_approval_results:
-            self.statusBar.showMessage("No approval audit results to export")
+        matched_results = [result for result in self.last_approval_results if result.get("status") == "Match"]
+        if not matched_results:
+            self.statusBar.showMessage("No matched approval payment copies to export")
             return
 
-        default_name = f"approval_audit_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+        default_name = f"matched_payment_copies_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
         default_path = os.path.join(os.path.expanduser("~"), "Downloads", default_name)
         if not os.path.isdir(os.path.dirname(default_path)):
             default_path = os.path.join(os.path.expanduser("~"), default_name)
@@ -2443,7 +2458,7 @@ class SimplePaymentApp(QMainWindow):
             excel_file = self.file_path_input.text().strip()
 
         report_html = build_approval_audit_html(
-            self.last_approval_results,
+            matched_results,
             excel_file=os.path.basename(excel_file) if excel_file else "",
             run_date=datetime.now().strftime("%d-%b-%Y %H:%M"),
         )
@@ -2455,7 +2470,7 @@ class SimplePaymentApp(QMainWindow):
         document = QTextDocument()
         document.setHtml(report_html)
         document.print(printer)
-        self.statusBar.showMessage(f"Approval audit PDF exported: {file_path}")
+        self.statusBar.showMessage(f"Matched payment copies PDF exported: {file_path}")
         
     def _handle_finished(self, result):
         if isinstance(result, dict):

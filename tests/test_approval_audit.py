@@ -5,6 +5,7 @@ from approval_audit import (
     build_approval_audit_html,
     compare_payment_details,
     expected_to_bic,
+    extract_gtexchange_print_view_html,
     format_payment_copy,
     normalize_date,
     parse_legacy_payment_details,
@@ -257,6 +258,12 @@ class ApprovalAuditTests(unittest.TestCase):
                     "status": "Match",
                     "details": "All checked fields match",
                     "payment_copy": "APUSDPACS - E008260612AOCYQL\nPayment copy\nTo : IRVTUS3NXXX",
+                    "payment_copy_html": (
+                        '<div class="headerPrintView"><table><tr><td><pre><span style="FONT-WEIGHT: bold;">MUR'
+                        '</span></pre></td><td><pre>E008260612AOCYQL</pre></td></tr></table></div>'
+                        '<pre><span class="bodyStdLabelTrueType completeDataDisplay">From : CHFXGB3LXXX\n'
+                        'To : IRVTUS3NXXX</span></pre>'
+                    ),
                 },
                 {
                     "template": "APAUDPACS",
@@ -272,13 +279,29 @@ class ApprovalAuditTests(unittest.TestCase):
             run_date="12-Jun-2026 13:00",
         )
 
-        self.assertIn("Approval Audit Pack", html)
-        self.assertIn("Convera &amp; CCT.xlsx", html)
-        self.assertIn("Total references</div><strong>2</strong>", html)
-        self.assertIn("Matches</div><strong>1</strong>", html)
-        self.assertIn("Manual reviews</div><strong>1</strong>", html)
-        self.assertIn("Amount mismatch &lt;check&gt;", html)
+        self.assertIn("E008260612AOCYQL", html)
         self.assertIn("To : IRVTUS3NXXX", html)
+        self.assertIn("headerPrintView", html)
+        self.assertNotIn("Approval Audit Pack", html)
+        self.assertNotIn("Amount mismatch", html)
+        self.assertNotIn("E008260612AOCYOF", html)
+
+    def test_extract_gtexchange_print_view_html_keeps_print_header_and_body(self):
+        raw_html = """
+        <script>bad()</script>
+        <div class="nav-tab">Navigation</div>
+        <div class="headerPrintView"><table><tr><td><pre><b>MUR</b></pre></td></tr></table></div>
+        <div><pre><span class="bodyStdLabelTrueType completeDataDisplay">From : CHFXGB3LXXX
+To : IRVTUS3NXXX</span></pre></div>
+        """
+
+        html = extract_gtexchange_print_view_html(raw_html, "E008260612AOCYQL")
+
+        self.assertIn("headerPrintView", html)
+        self.assertIn("From : CHFXGB3LXXX", html)
+        self.assertIn("To : IRVTUS3NXXX", html)
+        self.assertNotIn("<script", html)
+        self.assertNotIn("Navigation", html)
 
 
 if __name__ == "__main__":
