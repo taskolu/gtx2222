@@ -15,6 +15,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QDate, QPoint, QRect,
 from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter, QBrush, QKeySequence, QShortcut
 import re
 import subprocess
+import json
 from approval_audit import approval_template_name, compare_payment_details, parse_reference_lines
 from payment_mapping import (
     build_narrative,
@@ -1187,6 +1188,9 @@ class ApprovalAuditWorker(BrowserWorker):
         super().__init__(username, password, "", payments_data)
         self.approval_references = approval_references
 
+    def _emit_result_update(self, result):
+        self.signals.progress.emit(f"APPROVAL_RESULT:{json.dumps(result)}")
+
     def _launch_page(self, playwright):
         launch_options = get_browser_launch_options()
         use_cdp = launch_options.pop("use_cdp", False)
@@ -1337,36 +1341,42 @@ class ApprovalAuditWorker(BrowserWorker):
                         details_text = self._search_details_text(page, approval_reference.reference)
                         payment = self._payment_for_reference(approval_reference, used_rows)
                         if not payment:
-                            results.append({
+                            result = {
                                 "template": approval_reference.template,
                                 "reference": approval_reference.reference,
                                 "expected_amount": "",
                                 "expected_date": "",
                                 "status": "Needs manual review",
                                 "details": "GTExchange details opened, but no matching Excel row found for this template",
-                            })
+                            }
+                            results.append(result)
+                            self._emit_result_update(result)
                             continue
 
                         audit_result = compare_payment_details(payment, approval_reference.reference, details_text)
                         details = "; ".join(audit_result.issues) if audit_result.issues else "All checked fields match"
-                        results.append({
+                        result = {
                             "template": approval_reference.template,
                             "reference": approval_reference.reference,
                             "expected_amount": f"{payment.get('amount', 0):,.2f}",
                             "expected_date": payment.get("value_date", ""),
                             "status": audit_result.status,
                             "details": details,
-                        })
+                        }
+                        results.append(result)
+                        self._emit_result_update(result)
                     except Exception as exc:
                         payment = self._payment_for_reference(approval_reference, used_rows, mark_used=False)
-                        results.append({
+                        result = {
                             "template": approval_reference.template,
                             "reference": approval_reference.reference,
                             "expected_amount": f"{payment.get('amount', 0):,.2f}" if payment else "",
                             "expected_date": payment.get("value_date", "") if payment else "",
                             "status": "Needs manual review",
                             "details": f"Search/read failed: {exc}",
-                        })
+                        }
+                        results.append(result)
+                        self._emit_result_update(result)
 
                 self.signals.finished.emit({
                     "status": "approval_audit",
@@ -1931,6 +1941,7 @@ class SimplePaymentApp(QMainWindow):
             self.statusBar.showMessage("No valid payments found in file")
             self.header_status_label.setText("No valid payments")
             self.start_btn.setEnabled(False)
+        self._populate_approval_preview_from_payments()
         self._update_summary()
     
     def _get_default_value_date(self, template_name):
@@ -2050,7 +2061,7 @@ class SimplePaymentApp(QMainWindow):
             return
 
         self._update_value_dates_from_table()
-        self.approval_results_table.setRowCount(0)
+        self._populate_approval_pending_results(approval_references)
         self.last_error_message = ""
         self.copy_error_btn.setEnabled(False)
 
@@ -2094,6 +2105,14 @@ class SimplePaymentApp(QMainWindow):
                     break
     
     def _update_progress(self, message):
+        if message.startswith("APPROVAL_RESULT:"):
+            try:
+                result = json.loads(message.split(":", 1)[1])
+                self._update_approval_result_row(result)
+            except Exception as exc:
+                self.statusBar.showMessage(f"Could not update approval result: {exc}")
+            return
+
         # Check if this is a status update for a specific payment
         if message.startswith("REF:"):
             # Format is REF:row_num:reference
@@ -2277,17 +2296,111 @@ class SimplePaymentApp(QMainWindow):
         for result in results:
             row = self.approval_results_table.rowCount()
             self.approval_results_table.insertRow(row)
-            values = [
-                result.get("template", ""),
-                result.get("reference", ""),
-                result.get("expected_amount", ""),
-                result.get("expected_date", ""),
-                result.get("status", ""),
-                result.get("details", ""),
-            ]
-            for col, value in enumerate(values):
-                self.approval_results_table.setItem(row, col, QTableWidgetItem(str(value)))
-            self._apply_approval_result_style(row, result.get("status", ""))
+            self._set_approval_result_row(row, result)
+
+    def _approval_result_from_payment(self, payment, reference="", status="Pending", details="Waiting for audit"):
+        return {
+            "template": approval_template_name(payment),
+            "reference": reference,
+            "expected_amount": f"{payment.get('amount', 0):,.2f}",
+            "expected_date": payment.get("value_date", ""),
+            "status": status,
+            "details": details,
+        }
+
+    def _payment_for_approval_reference_preview(self, approval_reference, used_rows):
+        for payment in self.payments_data:
+            row_num = payment.get("row_num")
+            if row_num in used_rows:
+                continue
+            if approval_template_name(payment) == approval_reference.template:
+                used_rows.add(row_num)
+                return payment
+        return None
+
+    def _populate_approval_preview_from_payments(self):
+        if not hasattr(self, "approval_results_table"):
+            return
+
+        self.approval_results_table.setRowCount(0)
+        for payment in self.payments_data:
+            row = self.approval_results_table.rowCount()
+            self.approval_results_table.insertRow(row)
+            self._set_approval_result_row(
+                row,
+                self._approval_result_from_payment(
+                    payment,
+                    details="Paste approval references, then run dry audit",
+                ),
+            )
+
+    def _populate_approval_pending_results(self, approval_references):
+        self.approval_results_table.setRowCount(0)
+        used_rows = set()
+        for approval_reference in approval_references:
+            payment = self._payment_for_approval_reference_preview(approval_reference, used_rows)
+            if payment:
+                result = self._approval_result_from_payment(
+                    payment,
+                    reference=approval_reference.reference,
+                    details="Waiting for audit",
+                )
+            else:
+                result = {
+                    "template": approval_reference.template,
+                    "reference": approval_reference.reference,
+                    "expected_amount": "",
+                    "expected_date": "",
+                    "status": "Pending",
+                    "details": "Waiting for audit; no matching Excel row found yet",
+                }
+            row = self.approval_results_table.rowCount()
+            self.approval_results_table.insertRow(row)
+            self._set_approval_result_row(row, result)
+
+    def _set_approval_result_row(self, row, result):
+        values = [
+            result.get("template", ""),
+            result.get("reference", ""),
+            result.get("expected_amount", ""),
+            result.get("expected_date", ""),
+            result.get("status", ""),
+            result.get("details", ""),
+        ]
+        for col, value in enumerate(values):
+            self.approval_results_table.setItem(row, col, QTableWidgetItem(str(value)))
+        self._apply_approval_result_style(row, result.get("status", ""))
+
+    def _find_approval_result_row(self, result):
+        reference = str(result.get("reference", ""))
+        template = str(result.get("template", ""))
+        fallback_row = None
+
+        for row in range(self.approval_results_table.rowCount()):
+            reference_item = self.approval_results_table.item(row, 1)
+            template_item = self.approval_results_table.item(row, 0)
+            status_item = self.approval_results_table.item(row, 4)
+            row_reference = reference_item.text() if reference_item else ""
+            row_template = template_item.text() if template_item else ""
+            row_status = status_item.text() if status_item else ""
+
+            if reference and row_reference == reference:
+                return row
+            if fallback_row is None and row_template == template and row_status == "Pending":
+                fallback_row = row
+
+        return fallback_row
+
+    def _update_approval_result_row(self, result):
+        if not hasattr(self, "approval_results_table"):
+            return
+
+        row = self._find_approval_result_row(result)
+        if row is None:
+            row = self.approval_results_table.rowCount()
+            self.approval_results_table.insertRow(row)
+        self._set_approval_result_row(row, result)
+        QApplication.processEvents()
 
     def _copy_approval_results_selection(self):
         if not hasattr(self, "approval_results_table"):
@@ -2327,15 +2440,18 @@ class SimplePaymentApp(QMainWindow):
         if status == "Match":
             bg_color = QColor(24, 84, 58) if self.dark_mode else QColor(222, 247, 232)
             text_color = QColor(235, 255, 244) if self.dark_mode else QColor(18, 83, 48)
-        else:
+        elif status == "Needs manual review":
             bg_color = QColor(112, 42, 48) if self.dark_mode else QColor(255, 226, 226)
             text_color = QColor(255, 241, 241) if self.dark_mode else QColor(126, 30, 30)
+        else:
+            bg_color = None
+            text_color = None
 
         for col in range(self.approval_results_table.columnCount()):
             item = self.approval_results_table.item(row, col)
             if item:
-                item.setBackground(QBrush(bg_color))
-                item.setForeground(QBrush(text_color))
+                item.setBackground(QBrush(bg_color) if bg_color else QBrush())
+                item.setForeground(QBrush(text_color) if text_color else QBrush())
         
     def _cleanup_worker(self):
         # Stop spinners
