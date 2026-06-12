@@ -1241,6 +1241,14 @@ class ApprovalAuditWorker(BrowserWorker):
                 page.goto("https://swift.gtxclient.converaextprod.net/web.uftc/message/search/search.message.faces")
 
         page.get_by_role("textbox", name="GTX Reference").wait_for(timeout=15000)
+        self.signals.progress.emit("Search page ready")
+
+    def _ensure_search_page(self, page):
+        try:
+            page.get_by_role("textbox", name="GTX Reference").wait_for(timeout=1000)
+            return
+        except Exception:
+            self._open_search_page(page)
 
     def _payment_for_reference(self, approval_reference, used_rows):
         for payment in self.payments_data:
@@ -1253,7 +1261,7 @@ class ApprovalAuditWorker(BrowserWorker):
         return None
 
     def _search_details_text(self, page, gtx_reference):
-        self._open_search_page(page)
+        self._ensure_search_page(page)
         self.signals.progress.emit(f"Searching GTX reference {gtx_reference}...")
         page.get_by_role("textbox", name="GTX Reference").click()
         page.get_by_role("textbox", name="GTX Reference").press("ControlOrMeta+a")
@@ -1284,6 +1292,7 @@ class ApprovalAuditWorker(BrowserWorker):
             with sync_playwright() as p:
                 browser, context, page, cdp_process = self._launch_page(p)
                 self._login(page)
+                self._open_search_page(page)
 
                 for index, approval_reference in enumerate(self.approval_references, start=1):
                     if not self.is_running:
