@@ -4,9 +4,9 @@
 
 **Goal:** Add an HTML-styled one-file PDF export for matched GTExchange payment copies.
 
-**Architecture:** Build the GTExchange print-view HTML in `approval_audit.py` so it is unit-testable without PyQt. In `Main.py`, keep the current dry audit flow and add an `Export Matched Copies PDF` button that renders only matched audit results through `QTextDocument` and `QPrinter`.
+**Architecture:** Build the GTExchange print-view HTML in `approval_audit.py` so it is unit-testable without PyQt. In `Main.py`, keep the current dry audit flow and add an `Export Matched Copies PDF` button that renders only matched audit results through Playwright/Chromium.
 
-**Tech Stack:** Python, PyQt6 `QTextDocument`, PyQt6 `QPrinter`, existing unittest suite.
+**Tech Stack:** Python, Playwright/Chromium PDF rendering, existing unittest suite.
 
 ---
 
@@ -25,11 +25,11 @@
 **Files:**
 - Modify: `Main.py`
 
-- [ ] Add imports for `QTextDocument` and `QPrinter`.
+- [ ] Add a small browser PDF export helper for Playwright launch/PDF options.
 - [ ] Track `self.last_approval_results` after live/final audit updates.
 - [ ] Capture `#container-body` HTML during each approval detail search.
 - [ ] Add `Export Matched Copies PDF` next to the approval copy/view buttons.
-- [ ] Implement `_export_approval_audit_pdf` using `QFileDialog.getSaveFileName`, `QPrinter.PdfFormat`, and `QTextDocument.print`.
+- [ ] Implement `_export_approval_audit_pdf` using `QFileDialog.getSaveFileName` and Playwright `page.pdf`.
 - [ ] Enable the export button only when matched results exist.
 
 ### Task 3: Verify And Commit

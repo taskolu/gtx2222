@@ -12,8 +12,7 @@ from PyQt6.QtWidgets import (
     QTextEdit, QTabWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QDate, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter, QBrush, QKeySequence, QShortcut, QTextDocument
-from PyQt6.QtPrintSupport import QPrinter
+from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter, QBrush, QKeySequence, QShortcut
 import re
 import subprocess
 import json
@@ -32,6 +31,7 @@ from payment_mapping import (
     resolve_payment_template,
 )
 from browser_launch import build_edge_cdp_args, get_browser_launch_options, wait_for_cdp_endpoint
+from pdf_export import render_html_pdf_with_playwright
 
 # SpinningIcon class - a QLabel that displays a spinning image
 class SpinningIcon(QLabel):
@@ -2463,13 +2463,26 @@ class SimplePaymentApp(QMainWindow):
             run_date=datetime.now().strftime("%d-%b-%Y %H:%M"),
         )
 
-        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
-        printer.setOutputFileName(file_path)
+        if not PLAYWRIGHT_AVAILABLE:
+            error_message = "PDF export failed: Playwright is not installed."
+            self.last_error_message = error_message
+            self.copy_error_btn.setEnabled(True)
+            self.statusBar.showMessage(error_message)
+            self._show_error_details(error_message)
+            return
 
-        document = QTextDocument()
-        document.setHtml(report_html)
-        document.print(printer)
+        try:
+            self.statusBar.showMessage("Rendering matched payment copies PDF with browser...")
+            QApplication.processEvents()
+            render_html_pdf_with_playwright(report_html, file_path, sync_playwright)
+        except Exception as exc:
+            error_message = f"PDF export failed: {exc}"
+            self.last_error_message = error_message
+            self.copy_error_btn.setEnabled(True)
+            self.statusBar.showMessage(error_message)
+            self._show_error_details(error_message)
+            return
+
         self.statusBar.showMessage(f"Matched payment copies PDF exported: {file_path}")
         
     def _handle_finished(self, result):
