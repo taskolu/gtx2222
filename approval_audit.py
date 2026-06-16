@@ -154,9 +154,8 @@ def build_approval_audit_html(results, excel_file="", run_date=""):
     matched_results = [result for result in (results or []) if result.get("status") == "Match"]
     copy_sections = []
     for index, result in enumerate(matched_results):
-        section_style = ' style="page-break-before: always;"' if index else ""
         copy_sections.append(
-            f'<section class="payment-section"{section_style}>'
+            '<section class="payment-section">'
             + extract_gtexchange_print_view_html(
                 result.get("payment_copy_html", ""),
                 result.get("reference", ""),
@@ -164,6 +163,8 @@ def build_approval_audit_html(results, excel_file="", run_date=""):
             )
             + "</section>"
         )
+        if index < len(matched_results) - 1:
+            copy_sections.append('<div class="payment-separator"></div>')
 
     return f"""<!doctype html>
 <html>
@@ -172,11 +173,11 @@ def build_approval_audit_html(results, excel_file="", run_date=""):
   <style>
     body {{ background: #ffffff; color: #333333; font-family: Arial, Helvetica, sans-serif; font-size: 10pt; margin: 0; }}
     .payment-section {{ margin: 0; padding: 0; }}
-    .payment-section:last-child {{ page-break-after: auto; }}
-    .gtexchange-copy {{ width: 100%; border: 2px solid #4d4d4d; }}
-    .gtexchange-title {{ background-color: #4f4f4f; color: #ffffff; font-size: 11pt; padding: 7px 8px; }}
-    .gtexchange-content {{ border-top: 1px solid #d2d2d2; padding: 7px 8px 9px; }}
-    .headerPrintView {{ background-color: #f7f7f7; border: 1px solid #d6d6d6; margin: 0; padding: 5px; }}
+    .payment-separator {{ border-top: 2px solid #777777; margin: 18px 0; height: 0; }}
+    .gtexchange-copy {{ box-sizing: border-box; width: 100%; border: 2px solid #4d4d4d; }}
+    .gtexchange-title {{ box-sizing: border-box; background-color: #4f4f4f; color: #ffffff; font-size: 11pt; padding: 7px 8px; }}
+    .gtexchange-content {{ box-sizing: border-box; border-top: 1px solid #d2d2d2; padding: 7px 8px 9px; }}
+    .headerPrintView {{ box-sizing: border-box; background-color: #f7f7f7; border: 1px solid #d6d6d6; margin: 0; padding: 5px; }}
     .headerPrintView table {{ border-collapse: collapse; width: 100%; }}
     .headerPrintView td {{ border-left: 1px solid #d8d8d8; padding: 3px 10px 3px 4px; vertical-align: top; }}
     .headerPrintView td:first-child {{ border-left: 0; }}
@@ -184,7 +185,7 @@ def build_approval_audit_html(results, excel_file="", run_date=""):
     .bodyStdLabelTrueType, pre {{ font-family: "Courier New", Consolas, monospace; font-size: 9pt; line-height: 1.2; }}
     pre {{ margin: 0; white-space: pre-wrap; }}
     .messageBody {{ margin: 0; }}
-    .messageBody pre {{ border-left: 1px solid #d6d6d6; border-right: 1px solid #d6d6d6; border-bottom: 1px solid #d6d6d6; padding: 8px 10px; }}
+    .messageBody pre {{ box-sizing: border-box; border-left: 1px solid #d6d6d6; border-right: 1px solid #d6d6d6; border-bottom: 1px solid #d6d6d6; padding: 8px 10px; }}
     .bodyStdListElt {{ color: #333333; }}
   </style>
 </head>
