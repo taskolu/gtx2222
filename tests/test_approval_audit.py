@@ -18,6 +18,7 @@ from approval_audit import (
     parse_payment_details,
     parse_reference_lines,
     is_reportable_payment_copy_result,
+    is_verify_no_search_item_warning,
     supports_automated_approval,
     supports_pacs_approval,
 )
@@ -302,6 +303,22 @@ class ApprovalAuditTests(unittest.TestCase):
         self.assertEqual(status, "MESSAGE ARCHIVED")
         self.assertTrue(approval_status_is_already_processed(status))
         self.assertFalse(approval_status_is_eligible(status))
+
+    def test_approval_page_status_recognizes_awaiting_archiving_as_processed(self):
+        status = approval_page_status(
+            """
+            Unit TGBP
+            Status MESSAGE AWAITING ARCHIVING
+            """
+        )
+
+        self.assertEqual(status, "MESSAGE AWAITING ARCHIVING")
+        self.assertTrue(approval_status_is_already_processed(status))
+
+    def test_identifies_verify_no_search_item_warning_text(self):
+        self.assertTrue(is_verify_no_search_item_warning("Warning Warning\nNo search item found"))
+        self.assertTrue(is_verify_no_search_item_warning("No search item found"))
+        self.assertFalse(is_verify_no_search_item_warning("MESSAGE AWAITING VERIFICATION"))
 
     def test_approval_precheck_allows_matching_pacs_waiting_for_verification(self):
         payment = {

@@ -153,6 +153,10 @@ def approval_status_is_already_processed(status):
     return str(status or "").strip().upper() in APPROVAL_ALREADY_PROCESSED_STATUSES
 
 
+def is_verify_no_search_item_warning(text):
+    return "NO SEARCH ITEM FOUND" in re.sub(r"\s+", " ", str(text or "")).upper()
+
+
 def build_approval_precheck_decision(payment, gtx_reference, details_text):
     if not supports_automated_approval(payment):
         return ApprovalPrecheckDecision(

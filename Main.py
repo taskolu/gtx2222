@@ -27,6 +27,7 @@ from approval_audit import (
     expected_to_bic,
     format_payment_copy,
     is_reportable_payment_copy_result,
+    is_verify_no_search_item_warning,
     normalize_amount,
     normalize_date,
     parse_reference_lines,
@@ -1466,6 +1467,24 @@ class ApprovalRunWorker(ApprovalAuditWorker):
         page.wait_for_timeout(500)
         self.signals.progress.emit("Verify page ready")
 
+    def _dismiss_verify_no_search_warning(self, page):
+        try:
+            warning_text = page.get_by_text("No search item found").first
+            warning_text.wait_for(timeout=1500)
+            text = warning_text.inner_text(timeout=1500)
+            if not is_verify_no_search_item_warning(text):
+                return False
+
+            self.signals.progress.emit("Verify search returned no item; closing warning popup")
+            try:
+                page.get_by_role("button", name="OK").click(timeout=5000)
+            except Exception:
+                page.locator('input[value="OK"], button:has-text("OK")').first.click(timeout=5000)
+            page.wait_for_timeout(500)
+            return True
+        except Exception:
+            return False
+
     def _search_verify_details(self, page, gtx_reference):
         self._open_verify_page(page)
         self.signals.progress.emit(f"Searching verify queue for {gtx_reference}...")
@@ -1479,6 +1498,7 @@ class ApprovalRunWorker(ApprovalAuditWorker):
         try:
             page.get_by_role("link", name=gtx_reference).wait_for(timeout=15000)
         except Exception as exc:
+            self._dismiss_verify_no_search_warning(page)
             raise VerifyReferenceNotFound(f"{gtx_reference} was not found in Verify Messages") from exc
         self.signals.progress.emit(f"Opening verify details for {gtx_reference}...")
         try:
