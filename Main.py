@@ -1436,6 +1436,10 @@ class ApprovalAuditWorker(BrowserWorker):
                 pass
 
 
+class VerifyReferenceNotFound(Exception):
+    pass
+
+
 class ApprovalRunWorker(ApprovalAuditWorker):
     def _open_verify_page(self, page):
         self.signals.progress.emit("Opening Verify Messages page...")
@@ -1472,7 +1476,10 @@ class ApprovalRunWorker(ApprovalAuditWorker):
         reference_input.fill(gtx_reference)
         page.wait_for_timeout(500)
         page.get_by_role("button", name="Search").click()
-        page.get_by_role("link", name=gtx_reference).wait_for(timeout=30000)
+        try:
+            page.get_by_role("link", name=gtx_reference).wait_for(timeout=15000)
+        except Exception as exc:
+            raise VerifyReferenceNotFound(f"{gtx_reference} was not found in Verify Messages") from exc
         self.signals.progress.emit(f"Opening verify details for {gtx_reference}...")
         try:
             page.get_by_role("link", name=gtx_reference).click(timeout=30000)
@@ -1616,6 +1623,59 @@ class ApprovalRunWorker(ApprovalAuditWorker):
         success_message.wait_for(timeout=30000)
         return success_message.inner_text()
 
+    def _search_processed_skip_result(self, page, approval_reference, payment, verify_exc):
+        self.signals.progress.emit(
+            f"{approval_reference.reference} is not in Verify; checking Search before skipping..."
+        )
+        search_details = self._search_details(page, approval_reference.reference)
+        search_decision = build_approval_precheck_decision(
+            payment,
+            approval_reference.reference,
+            search_details["text"],
+        )
+        if search_decision.status == "Skipped - already processed":
+            return self._build_result(
+                approval_reference,
+                payment,
+                "Skipped - already processed",
+                f"{search_decision.details}; not found in Verify queue",
+            )
+
+        status = "Failed before approval" if search_decision.status == "Ready for approval" else search_decision.status
+        return self._build_result(
+            approval_reference,
+            payment,
+            status,
+            f"{verify_exc}; Search-page check did not confirm safe skip: {search_decision.details}",
+        )
+
+    def _attach_payment_copies_for_results(self, page, results, payments_by_reference):
+        for result in results:
+            if result.get("status") not in {"Approved", "Skipped - already processed"}:
+                continue
+
+            reference = str(result.get("reference") or "").strip()
+            payment = payments_by_reference.get(reference)
+            try:
+                details = self._search_details(page, reference)
+                if payment:
+                    audit_result = compare_payment_details(payment, reference, details["text"])
+                    if audit_result.issues:
+                        result["status"] = "Status unknown" if result.get("status") == "Approved" else "Needs manual review"
+                        result["details"] = (
+                            f"{result.get('details', '')}; final Search copy check found: "
+                            + "; ".join(audit_result.issues)
+                        )
+                        self._emit_result_update(result)
+                        continue
+
+                result["payment_copy"] = format_payment_copy(result.get("template", ""), reference, details["text"])
+                result["payment_copy_html"] = details["html"]
+                self._emit_result_update(result)
+            except Exception as exc:
+                result["details"] = f"{result.get('details', '')}; payment copy capture failed: {exc}"
+                self._emit_result_update(result)
+
     def run(self):
         if not PLAYWRIGHT_AVAILABLE:
             self.signals.error.emit("Playwright not installed. Run: pip install playwright")
@@ -1626,6 +1686,7 @@ class ApprovalRunWorker(ApprovalAuditWorker):
         cdp_process = None
         results = []
         used_rows = set()
+        payments_by_reference = {}
 
         try:
             self.signals.progress.emit("Starting approval run...")
@@ -1651,28 +1712,23 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                         self._emit_and_store(results, result)
                         break
 
+                    payments_by_reference[approval_reference.reference] = payment
                     stage = "before approval"
                     try:
-                        current_details = self._search_details(page, approval_reference.reference)
-                        current_decision = build_approval_precheck_decision(
-                            payment,
-                            approval_reference.reference,
-                            current_details["text"],
-                        )
-                        if not current_decision.can_approve:
-                            result = self._build_result(
+                        try:
+                            verify_details = self._search_verify_details(page, approval_reference.reference)
+                        except VerifyReferenceNotFound as verify_exc:
+                            result = self._search_processed_skip_result(
+                                page,
                                 approval_reference,
                                 payment,
-                                current_decision.status,
-                                current_decision.details,
-                                current_details if current_decision.status == "Skipped - already processed" else None,
+                                verify_exc,
                             )
                             self._emit_and_store(results, result)
-                            if current_decision.status != "Skipped - already processed":
-                                break
-                            continue
+                            if result.get("status") == "Skipped - already processed":
+                                continue
+                            break
 
-                        verify_details = self._search_verify_details(page, approval_reference.reference)
                         verify_decision = build_approval_precheck_decision(
                             payment,
                             approval_reference.reference,
@@ -1693,41 +1749,12 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                         self._fill_verify_form(page, payment, approval_reference.reference)
                         stage = "after OK click"
                         success_text = self._submit_verify_form(page, approval_reference.reference)
-
-                        try:
-                            final_details = self._search_details(page, approval_reference.reference)
-                            post_audit = compare_payment_details(
-                                payment,
-                                approval_reference.reference,
-                                final_details["text"],
-                            )
-                            if post_audit.issues:
-                                result = self._build_result(
-                                    approval_reference,
-                                    payment,
-                                    "Status unknown",
-                                    "Approved submit succeeded, but post-approval detail check found: "
-                                    + "; ".join(post_audit.issues),
-                                    final_details,
-                                )
-                                self._emit_and_store(results, result)
-                                break
-
-                            result = self._build_result(
-                                approval_reference,
-                                payment,
-                                "Approved",
-                                success_text or "Message is successfully approved",
-                                final_details,
-                            )
-                        except Exception as final_exc:
-                            result = self._build_result(
-                                approval_reference,
-                                payment,
-                                "Approved",
-                                f"{success_text or 'Message is successfully approved'}; payment copy capture failed: {final_exc}",
-                            )
-
+                        result = self._build_result(
+                            approval_reference,
+                            payment,
+                            "Approved",
+                            success_text or "Message is successfully approved",
+                        )
                         self._emit_and_store(results, result)
                     except Exception as exc:
                         if stage == "after verify click before OK":
@@ -1745,6 +1772,7 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                         self._emit_and_store(results, result)
                         break
 
+                self._attach_payment_copies_for_results(page, results, payments_by_reference)
                 approved_count = sum(1 for result in results if result.get("status") == "Approved")
                 self.signals.finished.emit({
                     "status": "approval_run",
