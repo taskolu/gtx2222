@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime
 
 from approval_audit import (
     approval_confirmation_values,
@@ -12,6 +13,7 @@ from approval_audit import (
     compare_payment_details,
     expected_to_bic,
     extract_gtexchange_print_view_html,
+    format_approved_payments_pdf_name,
     format_payment_copy,
     normalize_date,
     parse_legacy_payment_details,
@@ -542,6 +544,12 @@ class ApprovalAuditTests(unittest.TestCase):
         self.assertTrue(is_successful_approval_result_status("Confirmation values checked"))
         self.assertTrue(is_successful_approval_result_status("Approved"))
         self.assertFalse(is_successful_approval_result_status("Failed before approval"))
+
+    def test_formats_approved_payments_pdf_name(self):
+        self.assertEqual(
+            format_approved_payments_pdf_name(datetime(2026, 6, 18, 15, 30)),
+            "AP Funding Approved payments June 18 2026.pdf",
+        )
 
     def test_extract_gtexchange_print_view_html_keeps_print_header_and_body(self):
         raw_html = """

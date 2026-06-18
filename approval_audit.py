@@ -233,6 +233,11 @@ def is_successful_approval_result_status(status):
     return str(status or "") in SUCCESSFUL_APPROVAL_RESULT_STATUSES
 
 
+def format_approved_payments_pdf_name(run_date=None):
+    date_value = run_date or datetime.now()
+    return f"AP Funding Approved payments {date_value.strftime('%B')} {date_value.day} {date_value.year}.pdf"
+
+
 def parse_reference_lines(text):
     references = []
     for raw_line in str(text or "").splitlines():

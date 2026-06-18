@@ -25,6 +25,7 @@ from approval_audit import (
     compact_text,
     compare_payment_details,
     expected_to_bic,
+    format_approved_payments_pdf_name,
     format_payment_copy,
     is_reportable_payment_copy_result,
     is_successful_approval_result_status,
@@ -2089,7 +2090,7 @@ class SimplePaymentApp(QMainWindow):
         entry_layout.addLayout(start_btn_layout)
 
         self.workflow_tabs.addTab(entry_tab, "Payment Entry")
-        self.workflow_tabs.addTab(self._build_approval_tab(), "Approval Audit")
+        self.workflow_tabs.addTab(self._build_approval_tab(), "Approval")
 
         main_layout.addWidget(header_frame)
         main_layout.addWidget(self.workflow_tabs)
@@ -2154,10 +2155,6 @@ class SimplePaymentApp(QMainWindow):
 
         action_layout = QHBoxLayout()
         action_layout.addStretch()
-        self.approval_audit_btn = QPushButton("Run Dry Audit")
-        self.approval_audit_btn.setObjectName("primaryButton")
-        self.approval_audit_btn.clicked.connect(self._start_approval_audit)
-        action_layout.addWidget(self.approval_audit_btn)
 
         self.approval_run_btn = QPushButton("Run Approval")
         self.approval_run_btn.setObjectName("primaryButton")
@@ -2165,18 +2162,13 @@ class SimplePaymentApp(QMainWindow):
         action_layout.addWidget(self.approval_run_btn)
         refs_layout.addLayout(action_layout)
 
-        results_group = QGroupBox("Audit Results")
+        results_group = QGroupBox("Approval Results")
         results_layout = QVBoxLayout(results_group)
         results_layout.setContentsMargins(14, 18, 14, 14)
         results_layout.setSpacing(10)
 
         results_action_layout = QHBoxLayout()
         results_action_layout.addStretch()
-        self.view_payment_copies_btn = QPushButton("View Payment Copies")
-        self.view_payment_copies_btn.setObjectName("secondaryButton")
-        self.view_payment_copies_btn.clicked.connect(self._show_payment_copies)
-        self.view_payment_copies_btn.setEnabled(False)
-        results_action_layout.addWidget(self.view_payment_copies_btn)
 
         self.copy_payment_copies_btn = QPushButton("Copy Payment Copies")
         self.copy_payment_copies_btn.setObjectName("secondaryButton")
@@ -2544,7 +2536,8 @@ class SimplePaymentApp(QMainWindow):
         self.browse_btn.setEnabled(False)
         self.clear_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
-        self.approval_audit_btn.setEnabled(False)
+        if hasattr(self, "approval_audit_btn"):
+            self.approval_audit_btn.setEnabled(False)
         self.approval_run_btn.setEnabled(False)
         self.approval_browse_btn.setEnabled(False)
         self.approval_clear_btn.setEnabled(False)
@@ -2602,7 +2595,8 @@ class SimplePaymentApp(QMainWindow):
         self.browse_btn.setEnabled(False)
         self.clear_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
-        self.approval_audit_btn.setEnabled(False)
+        if hasattr(self, "approval_audit_btn"):
+            self.approval_audit_btn.setEnabled(False)
         self.approval_run_btn.setEnabled(False)
         self.approval_browse_btn.setEnabled(False)
         self.approval_clear_btn.setEnabled(False)
@@ -2916,14 +2910,14 @@ class SimplePaymentApp(QMainWindow):
             self.statusBar.showMessage("No matched approval payment copies to export")
             return
 
-        default_name = f"matched_payment_copies_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+        default_name = format_approved_payments_pdf_name(datetime.now())
         default_path = os.path.join(os.path.expanduser("~"), "Downloads", default_name)
         if not os.path.isdir(os.path.dirname(default_path)):
             default_path = os.path.join(os.path.expanduser("~"), default_name)
 
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Approval Audit PDF",
+            "Export Approval PDF",
             default_path,
             "PDF Files (*.pdf)",
         )
@@ -2976,10 +2970,7 @@ class SimplePaymentApp(QMainWindow):
         downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
         if not os.path.isdir(downloads_dir):
             downloads_dir = os.path.expanduser("~")
-        file_path = os.path.join(
-            downloads_dir,
-            f"approval_payment_copies_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-        )
+        file_path = os.path.join(downloads_dir, format_approved_payments_pdf_name(datetime.now()))
 
         excel_file = ""
         if hasattr(self, "approval_file_path_input"):
@@ -3262,7 +3253,7 @@ class SimplePaymentApp(QMainWindow):
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Approval Audit Details")
+        dialog.setWindowTitle("Approval Details")
         dialog.resize(760, 420)
 
         layout = QVBoxLayout(dialog)
