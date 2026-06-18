@@ -98,6 +98,13 @@ REPORTABLE_PAYMENT_COPY_STATUSES = {
     "Approved",
     "Skipped - already processed",
 }
+SUCCESSFUL_APPROVAL_RESULT_STATUSES = {
+    "Match",
+    "Verify details matched",
+    "Confirmation values checked",
+    "Approved",
+    "Skipped - already processed",
+}
 APPROVAL_STATUS_VALUES = [
     APPROVAL_ELIGIBLE_STATUS,
     *sorted(APPROVAL_ALREADY_PROCESSED_STATUSES),
@@ -220,6 +227,10 @@ def is_reportable_payment_copy_result(result):
             or bool(str(result.get("payment_copy_html") or "").strip())
         )
     )
+
+
+def is_successful_approval_result_status(status):
+    return str(status or "") in SUCCESSFUL_APPROVAL_RESULT_STATUSES
 
 
 def parse_reference_lines(text):

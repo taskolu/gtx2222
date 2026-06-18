@@ -27,6 +27,7 @@ from approval_audit import (
     expected_to_bic,
     format_payment_copy,
     is_reportable_payment_copy_result,
+    is_successful_approval_result_status,
     is_verify_no_search_item_warning,
     normalize_amount,
     normalize_date,
@@ -1535,6 +1536,16 @@ class ApprovalRunWorker(ApprovalAuditWorker):
         results.append(result)
         self._emit_result_update(result)
 
+    def _emit_live_result(self, approval_reference, payment, status, details):
+        self._emit_result_update(
+            self._build_result(
+                approval_reference,
+                payment,
+                status,
+                details,
+            )
+        )
+
     def _click_verify(self, page, gtx_reference):
         self.signals.progress.emit(f"Clicking Verify for {gtx_reference}...")
         try:
@@ -1764,9 +1775,21 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                             self._emit_and_store(results, result)
                             break
 
+                        self._emit_live_result(
+                            approval_reference,
+                            payment,
+                            "Verify details matched",
+                            "All checked fields match; Verify details checked against Excel",
+                        )
                         stage = "after verify click before OK"
                         self._click_verify(page, approval_reference.reference)
                         self._fill_verify_form(page, payment, approval_reference.reference)
+                        self._emit_live_result(
+                            approval_reference,
+                            payment,
+                            "Confirmation values checked",
+                            "All checked fields match; confirmation values entered and read back",
+                        )
                         stage = "after OK click"
                         success_text = self._submit_verify_form(page, approval_reference.reference)
                         result = self._build_result(
@@ -3121,7 +3144,9 @@ class SimplePaymentApp(QMainWindow):
         text = str(details or "").strip()
         if not text:
             return ""
-        if text in {"All checked fields match", "Waiting for audit", "Paste approval references, then run dry audit"}:
+        if text.startswith("All checked fields match"):
+            return text
+        if text in {"Waiting for audit", "Paste approval references, then run dry audit"}:
             return text
         if text.startswith("Search/read failed"):
             return "Search/read failed"
@@ -3268,7 +3293,7 @@ class SimplePaymentApp(QMainWindow):
         dialog.exec()
 
     def _apply_approval_result_style(self, row, status):
-        if status in {"Match", "Approved", "Skipped - already processed"}:
+        if is_successful_approval_result_status(status):
             bg_color = QColor(24, 84, 58) if self.dark_mode else QColor(222, 247, 232)
             text_color = QColor(235, 255, 244) if self.dark_mode else QColor(18, 83, 48)
         elif status in {

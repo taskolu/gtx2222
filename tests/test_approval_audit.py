@@ -18,6 +18,7 @@ from approval_audit import (
     parse_payment_details,
     parse_reference_lines,
     is_reportable_payment_copy_result,
+    is_successful_approval_result_status,
     is_verify_no_search_item_warning,
     supports_automated_approval,
     supports_pacs_approval,
@@ -535,6 +536,12 @@ class ApprovalAuditTests(unittest.TestCase):
         )
         self.assertFalse(is_reportable_payment_copy_result({"status": "Needs manual review", "payment_copy": "copy"}))
         self.assertFalse(is_reportable_payment_copy_result({"status": "Approved", "payment_copy": ""}))
+
+    def test_successful_approval_statuses_include_live_gate_updates(self):
+        self.assertTrue(is_successful_approval_result_status("Verify details matched"))
+        self.assertTrue(is_successful_approval_result_status("Confirmation values checked"))
+        self.assertTrue(is_successful_approval_result_status("Approved"))
+        self.assertFalse(is_successful_approval_result_status("Failed before approval"))
 
     def test_extract_gtexchange_print_view_html_keeps_print_header_and_body(self):
         raw_html = """
