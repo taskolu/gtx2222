@@ -25,6 +25,69 @@ For every payment, the automation must verify all required fields before enterin
 - Search result is unique and not ambiguous.
 - Page status is eligible for approval.
 
+## Observed GTExchange Verify Flow
+
+The real approval path captured from Playwright codegen uses the `Messages` > `Verify Messages` screen:
+
+1. Open `Messages`.
+2. Open `Verify Messages`.
+3. Search by exact `GTX Reference`.
+4. Open the matching reference link.
+5. Read the payment detail page before clicking `Verify`.
+6. Confirm status is `MESSAGE AWAITING VERIFICATION`.
+7. Click `Verify`.
+8. On the verify/edit page, re-check the same reference and key fields.
+9. Enter the confirmation currency, amount, and date/amount fields required by the page.
+10. Re-read the fields that were entered.
+11. Click `Ok` only if all gates pass.
+12. Confirm the success message.
+13. Continue to the next reference.
+14. After all approvals are complete, go to the search flow and capture matched payment copies/PDF.
+
+The automation should not rely on the codegen's click sequence as proof. Codegen clicks are only locator clues. The implementation must read and compare values programmatically before acting.
+
+## PACS Verify Page Fields
+
+For PACS payments, codegen shows these useful fields on the verify/edit page:
+
+- Header/reference heading.
+- `From`.
+- `To`.
+- `(BizMsgIdr) Business Message Identifier`.
+- `(MsgId) Message Identification`.
+- `(InstrId) Instruction Identification`.
+- `(EndToEndId) End To End Identification`.
+- `(UETR) UETR`.
+- `(IntrBkSttlmAmt) Interbank Settlement Amount`.
+- Currency input with title `You can enter currency ISO`.
+- Amount input with title beginning `Enter amount with a dot as`.
+- Date input with title beginning `You can enter date in format`.
+- `(IntrBkSttlmDt) Interbank Settlement Date`.
+- Instructed amount currency/value.
+- `(Ustrd) Unstructured`.
+- `Ok` button.
+- Success message containing `Message is successfully`.
+
+For PACS, confirmation fields must be filled from the locked Excel/reference item, then read back from the page before `Ok`.
+
+## CZK / MT101 Verify Page Fields
+
+CZK/MT101 uses a different structure from PACS. Codegen shows these useful fields:
+
+- Header/reference heading.
+- `From`.
+- `To`.
+- `(20) Sender's Reference`.
+- `(30) Requested Execution Date`.
+- `(21) Transaction Reference`.
+- `Currency`.
+- `Amount`.
+- Currency input with title `You can enter currency ISO`.
+- Amount input with title beginning `Enter amount with a dot as`.
+- `(70) Remittance Information`.
+
+CZK approval must use a separate parser/check path. It must not reuse PACS-only field assumptions.
+
 ## In-Between Safety Gates
 
 Approval should use multiple gates, not one early check:
@@ -33,31 +96,42 @@ Approval should use multiple gates, not one early check:
    - Lock the current reference and expected values.
    - Do not continue based on list position.
 
-2. **After opening verify page**
+2. **After opening the pre-Verify detail page**
    - Read displayed reference.
    - Confirm it equals the locked reference.
+   - Read status.
+   - Confirm status is eligible, for example `MESSAGE AWAITING VERIFICATION`.
+   - Parse page details and compare reference, amount, currency, date, unit, To BIC, and remittance.
 
-3. **Before entering amount/date**
-   - Parse page details again.
+3. **After clicking Verify**
+   - Read displayed reference again on the verify/edit page.
+   - Confirm it equals the locked reference.
+   - Use the PACS or CZK/MT101 field path based on the locked payment/template.
+
+4. **Before entering amount/date**
+   - Parse verify/edit page details again.
    - Compare reference, amount, currency, date, unit, To BIC, and remittance.
 
-4. **After filling amount/date fields**
+5. **After filling amount/date fields**
    - Read the input values back.
    - Confirm entered amount/date equal expected values.
    - Confirm page reference still equals locked reference.
 
-5. **Before first OK**
+6. **Before OK**
    - Re-read visible reference/details if available.
    - Confirm the locked reference and expected amount again.
+   - Click `Ok` only if all checks pass.
 
-6. **Before final OK**
-   - If a confirmation page appears, read reference, amount, and date again.
-   - Click final OK only if they still match.
-
-7. **After approval**
-   - Search/check status.
+7. **After OK**
+   - Confirm success message appears.
+   - Search/check status if available.
    - Confirm status changed as expected.
-   - Capture payment copy only after successful approval.
+   - Do not capture final payment copies until the full approval run is complete.
+
+8. **After all references**
+   - Open search flow.
+   - Search each approved/matched reference.
+   - Capture matched payment copies and export PDF.
 
 ## Stop Conditions
 
@@ -72,6 +146,8 @@ Automation must not approve if any of these happen:
 - Confirmation fields cannot be read back.
 - Status is not eligible for approval.
 - Any timeout occurs at a safety-critical step.
+- PACS/CZK page type does not match the expected template path.
+- Success message does not appear after `Ok`.
 
 ## Rerun Behavior
 
@@ -102,6 +178,7 @@ Future approval results should distinguish these states:
 - Already approved
 - Skipped - already processed
 - Failed before approval
+- Failed after verify click before OK
 - Needs manual review
 - Search/read failed
 - Status unknown
