@@ -223,6 +223,70 @@ class BrowserWorker(QObject):
             pass
         return False
 
+    def _click_visible_locator(self, locator, description, timeout=15000):
+        self.signals.progress.emit(f"Waiting for {description}...")
+        first_match = locator.first
+        first_match.wait_for(state="visible", timeout=timeout)
+        try:
+            match_count = locator.count()
+            if match_count > 1:
+                self.signals.progress.emit(f"{description} has {match_count} matches; clicking the first visible match")
+        except Exception:
+            pass
+        first_match.click(timeout=timeout)
+
+    def _link_is_visible(self, page, link_name, timeout=3000):
+        try:
+            page.get_by_role("link", name=link_name).first.wait_for(state="visible", timeout=timeout)
+            return True
+        except Exception:
+            return False
+
+    def _click_create_from_template(self, page):
+        attempts = [
+            (page.get_by_role("link", name="Create a Message from a"), "Create a Message from a Template link"),
+            (page.get_by_role("link", name="Create a Message from a Template"), "Create a Message from a Template link"),
+            (page.locator('a:has-text("Create a Message from a Template")'), "Create a Message from a Template fallback link"),
+        ]
+        last_error = None
+        for locator, description in attempts:
+            try:
+                self._click_visible_locator(locator, description)
+                page.wait_for_load_state('networkidle', timeout=15000)
+                self._handle_license_popup(page)
+                page.get_by_role("textbox", name="Identifier").wait_for(state="visible", timeout=15000)
+                return True
+            except Exception as exc:
+                last_error = exc
+                self.signals.progress.emit(f"{description} was not ready/clickable: {exc}")
+
+        self.signals.progress.emit(f"Could not open template creation page: {last_error}")
+        return False
+
+    def _click_template_search_result(self, page, template_name):
+        candidates = [template_name]
+        alt_template = TEMPLATE_CODE_MAP.get(template_name, "")
+        if alt_template and alt_template not in candidates:
+            candidates.append(alt_template)
+
+        last_error = None
+        for candidate in candidates:
+            attempts = [
+                (page.get_by_role("link", name=candidate), f"template link {candidate}"),
+                (page.locator(f'a:has-text("{candidate}")'), f"template link {candidate} fallback"),
+            ]
+            for locator, description in attempts:
+                try:
+                    self._click_visible_locator(locator, description, timeout=12000)
+                    page.wait_for_load_state('networkidle', timeout=15000)
+                    self.signals.progress.emit(f"Clicked template link: {candidate}")
+                    return candidate
+                except Exception as exc:
+                    last_error = exc
+                    self.signals.progress.emit(f"{description} was not ready/clickable: {exc}")
+
+        raise ValueError(f"Could not select template {template_name}: {last_error}")
+
     def _click_create_message(self, page):
         try:
             page.get_by_role("button", name="Create Message").click()
@@ -661,20 +725,11 @@ class BrowserWorker(QObject):
                         
                         self.signals.progress.emit(f"Processing {template_name} for amount {amount}")
                         
-                        # Click on Create a Message from a Template
-                        try:
-                            page.get_by_role("link", name="Create a Message from a").click()
-                            page.wait_for_load_state('networkidle', timeout=15000) # Increased from 10000
-                        except Exception as e:
-                            self.signals.progress.emit(f"Error clicking Create Message from Template: {e}")
-                            try:
-                                # Try alternative selector
-                                page.locator('a:has-text("Create a Message from a Template")').click()
-                                page.wait_for_load_state('networkidle', timeout=15000) # Increased from 10000
-                            except:
-                                self.signals.progress.emit(f"STATUS:{row_num}:Error")
-                                self.signals.error.emit(f"Could not navigate to template creation for {template_name}")
-                                continue  # Skip to next payment
+                        # Click on Create a Message from a Template only after the link is visible.
+                        if not self._click_create_from_template(page):
+                            self.signals.progress.emit(f"STATUS:{row_num}:Error")
+                            self.signals.error.emit(f"Could not navigate to template creation for {template_name}")
+                            continue  # Skip to next payment
                         
                         # Set creating unit (CCT_CHUK or TGBP) based on template
                         try:
@@ -700,9 +755,8 @@ class BrowserWorker(QObject):
                             
                             # Check if we need to try the alternative identifier
                             try:
-                                # Wait to see if the template appears
-                                if not page.locator(f'a:has-text("{search_term}")').count():
-                                    # Try alternative code/template
+                                # Wait briefly for the searched template link before trying the mapped alternative.
+                                if not self._link_is_visible(page, search_term):
                                     alt_search = TEMPLATE_CODE_MAP.get(search_term, "")
                                     if alt_search:
                                         self.signals.progress.emit(f"Template not found, trying alternative: {alt_search}")
@@ -710,7 +764,6 @@ class BrowserWorker(QObject):
                                         page.get_by_role("textbox", name="Identifier").fill(alt_search)
                                         page.get_by_role("button", name="Search").click()
                                         page.wait_for_load_state('networkidle', timeout=15000) # Increased from 10000
-                                        # Update template_name to the one that worked
                                         template_name = alt_search
                             except Exception as check_e:
                                 self.signals.progress.emit(f"Error checking alternative template: {check_e}")
@@ -727,47 +780,14 @@ class BrowserWorker(QObject):
                                 self.signals.error.emit(f"Failed to search for template: {template_name}")
                                 continue  # Skip to next payment
                         
-                        # Click on template link
+                        # Click on template link only after it is visible.
                         try:
-                            # First attempt with original template name
-                            template_link_found = False
-                            
-                            try:
-                                # Wait for template link to appear
-                                self.signals.progress.emit(f"Looking for template link: {template_name}")
-                                page.wait_for_selector(f'a:has-text("{template_name}")', timeout=8000) # Increased from 5000
-                                page.get_by_role("link", name=template_name).click()
-                                template_link_found = True
-                                self.signals.progress.emit(f"Clicked template link: {template_name}")
-                            except Exception as e:
-                                self.signals.progress.emit(f"Could not find template link for {template_name}: {e}")
-                            
-                            # If original template not found, try the alternative code
-                            if not template_link_found:
-                                alt_template = TEMPLATE_CODE_MAP.get(template_name, "")
-                                if alt_template:
-                                    try:
-                                        self.signals.progress.emit(f"Trying alternative template link: {alt_template}")
-                                        page.wait_for_selector(f'a:has-text("{alt_template}")', timeout=8000) # Increased from 5000
-                                        page.get_by_role("link", name=alt_template).click()
-                                        template_name = alt_template  # Update to the one that worked
-                                        self.signals.progress.emit(f"Clicked alternative template link: {alt_template}")
-                                    except Exception as alt_e:
-                                        self.signals.progress.emit(f"Could not find alternative link either: {alt_e}")
-                                        # Final attempt using locator
-                                        page.locator(f'a:has-text("{template_name}"), a:has-text("{alt_template}")').first.click()
-                            
-                            page.wait_for_load_state('networkidle', timeout=15000) # Increased from 10000
+                            template_name = self._click_template_search_result(page, template_name)
                         except Exception as e:
                             self.signals.progress.emit(f"Error clicking template link: {e}")
-                            try:
-                                # Try using locator instead
-                                page.locator(f'a:has-text("{template_name}")').first.click()
-                                page.wait_for_load_state('networkidle', timeout=15000) # Increased from 10000
-                            except:
-                                self.signals.progress.emit(f"STATUS:{row_num}:Error")
-                                self.signals.error.emit(f"Could not select template {template_name}")
-                                continue  # Skip to next payment
+                            self.signals.progress.emit(f"STATUS:{row_num}:Error")
+                            self.signals.error.emit(f"Could not select template {template_name}")
+                            continue  # Skip to next payment
 
                         if uses_pacs_flow:
                             if self._process_pacs_payment(page, payment):
