@@ -17,10 +17,17 @@ import re
 import subprocess
 import json
 from approval_audit import (
+    approval_confirmation_values,
+    build_approval_precheck_decision,
     approval_template_name,
     build_approval_audit_html,
+    compact_text,
     compare_payment_details,
+    expected_to_bic,
     format_payment_copy,
+    is_reportable_payment_copy_result,
+    normalize_amount,
+    normalize_date,
     parse_reference_lines,
 )
 from payment_mapping import (
@@ -1428,6 +1435,300 @@ class ApprovalAuditWorker(BrowserWorker):
                 pass
 
 
+class ApprovalRunWorker(ApprovalAuditWorker):
+    def _open_verify_page(self, page):
+        self.signals.progress.emit("Opening Verify Messages page...")
+        try:
+            verify_messages_link = page.get_by_role("link", name="Verify Messages")
+            verify_messages_link.wait_for(timeout=2000)
+            page.wait_for_timeout(500)
+            verify_messages_link.click(timeout=15000)
+        except Exception:
+            self.signals.progress.emit("Opening Messages menu...")
+            try:
+                page.get_by_role("link", name="Messages").click(timeout=15000)
+            except Exception as messages_exc:
+                self.signals.progress.emit(f"Messages menu click fallback: {messages_exc}")
+                page.locator('a:has-text("Messages")').first.click(timeout=15000)
+
+            page.wait_for_timeout(1000)
+            verify_messages_link = page.get_by_role("link", name="Verify Messages")
+            verify_messages_link.wait_for(timeout=30000)
+            page.wait_for_timeout(500)
+            verify_messages_link.click(timeout=15000)
+
+        page.get_by_role("textbox", name="GTX Reference").wait_for(timeout=30000)
+        page.wait_for_timeout(500)
+        self.signals.progress.emit("Verify page ready")
+
+    def _search_verify_details(self, page, gtx_reference):
+        self._open_verify_page(page)
+        self.signals.progress.emit(f"Searching verify queue for {gtx_reference}...")
+        reference_input = page.get_by_role("textbox", name="GTX Reference")
+        reference_input.click()
+        page.wait_for_timeout(500)
+        reference_input.press("ControlOrMeta+a")
+        reference_input.fill(gtx_reference)
+        page.wait_for_timeout(500)
+        page.get_by_role("button", name="Search").click()
+        page.get_by_role("link", name=gtx_reference).wait_for(timeout=30000)
+        self.signals.progress.emit(f"Opening verify details for {gtx_reference}...")
+        try:
+            page.get_by_role("link", name=gtx_reference).click(timeout=30000)
+        except Exception:
+            page.locator(f'a:has-text("{gtx_reference}")').first.click(timeout=30000)
+        page.locator("#container-body").wait_for(timeout=30000)
+        page.wait_for_timeout(500)
+        details_locator = page.locator("#container-body")
+        return {
+            "text": details_locator.inner_text(),
+            "html": details_locator.inner_html(),
+        }
+
+    def _build_result(self, approval_reference, payment, status, details, detail_payload=None):
+        result = {
+            "template": approval_reference.template,
+            "reference": approval_reference.reference,
+            "expected_amount": f"{payment.get('amount', 0):,.2f}" if payment else "",
+            "expected_date": payment.get("value_date", "") if payment else "",
+            "status": status,
+            "details": details,
+        }
+        if detail_payload:
+            result["payment_copy"] = format_payment_copy(
+                approval_reference.template,
+                approval_reference.reference,
+                detail_payload.get("text", ""),
+            )
+            result["payment_copy_html"] = detail_payload.get("html", "")
+        return result
+
+    def _emit_and_store(self, results, result):
+        results.append(result)
+        self._emit_result_update(result)
+
+    def _click_verify(self, page, gtx_reference):
+        self.signals.progress.emit(f"Clicking Verify for {gtx_reference}...")
+        try:
+            page.get_by_role("button", name="Verify").click(timeout=15000)
+        except Exception:
+            page.locator('input[value="Verify"], button:has-text("Verify")').first.click(timeout=15000)
+        page.locator("#container-body").wait_for(timeout=30000)
+        page.wait_for_timeout(500)
+        page.locator("#container-body").get_by_text(gtx_reference).first.wait_for(timeout=30000)
+
+    def _visible_title_input(self, page, title_prefix):
+        locator = page.locator(f'[title^="{title_prefix}"]:visible')
+        locator.first.wait_for(timeout=15000)
+        count = locator.count()
+        if count != 1:
+            raise ValueError(f"Expected one visible input titled '{title_prefix}', found {count}")
+        return locator.first
+
+    def _fill_and_read_input(self, page, title_prefix, value):
+        field = self._visible_title_input(page, title_prefix)
+        field.click()
+        page.wait_for_timeout(200)
+        field.press("ControlOrMeta+a")
+        field.fill(value)
+        page.wait_for_timeout(200)
+        return field.input_value().strip()
+
+    def _assert_verify_edit_page_matches_locked_payment(self, page, payment, gtx_reference):
+        container = page.locator("#container-body")
+        container.wait_for(timeout=30000)
+        edit_text = container.inner_text()
+        if gtx_reference not in edit_text:
+            raise ValueError(f"Verify edit page reference mismatch: expected {gtx_reference}")
+
+        expected_bic = expected_to_bic(payment)
+        if expected_bic and expected_bic not in edit_text.replace(" ", ""):
+            raise ValueError(f"Verify edit page missing expected To BIC {expected_bic}")
+
+        expected_narrative = compact_text(
+            build_narrative(payment.get("reference", "CO5590"), payment.get("otr_number", ""))
+        )
+        if expected_narrative and expected_narrative not in compact_text(edit_text):
+            raise ValueError("Verify edit page missing expected remittance narrative")
+
+    def _fill_pacs_verify_form(self, page, payment, gtx_reference):
+        self._assert_verify_edit_page_matches_locked_payment(page, payment, gtx_reference)
+        values = approval_confirmation_values(payment)
+        if not values.currency or not values.amount or not values.value_date:
+            raise ValueError("Missing expected currency, amount, or value date for approval confirmation")
+
+        entered_currency = self._fill_and_read_input(page, "You can enter currency ISO", values.currency)
+        entered_amount = self._fill_and_read_input(page, "Enter amount with a dot as", values.amount)
+        entered_date = self._fill_and_read_input(page, "You can enter date in format", values.value_date)
+
+        if entered_currency.upper() != values.currency:
+            raise ValueError(f"Currency read-back mismatch: expected {values.currency}, found {entered_currency}")
+
+        if normalize_amount(entered_amount) != normalize_amount(values.amount):
+            raise ValueError(f"Amount read-back mismatch: expected {values.amount}, found {entered_amount}")
+
+        if normalize_date(entered_date) != values.value_date:
+            raise ValueError(f"Date read-back mismatch: expected {values.value_date}, found {entered_date}")
+
+        self._assert_verify_edit_page_matches_locked_payment(page, payment, gtx_reference)
+        return values
+
+    def _submit_verify_form(self, page, gtx_reference):
+        self.signals.progress.emit(f"Submitting approval for {gtx_reference}...")
+        page.get_by_role("button", name="Ok").click(timeout=15000)
+        success_message = page.get_by_text("Message is successfully").first
+        success_message.wait_for(timeout=30000)
+        return success_message.inner_text()
+
+    def run(self):
+        if not PLAYWRIGHT_AVAILABLE:
+            self.signals.error.emit("Playwright not installed. Run: pip install playwright")
+            return
+
+        browser = None
+        context = None
+        cdp_process = None
+        results = []
+        used_rows = set()
+
+        try:
+            self.signals.progress.emit("Starting PACS approval run...")
+            with sync_playwright() as p:
+                browser, context, page, cdp_process = self._launch_page(p)
+                self._login(page)
+
+                for index, approval_reference in enumerate(self.approval_references, start=1):
+                    if not self.is_running:
+                        break
+
+                    self.signals.progress.emit(
+                        f"PACS approval {index}/{len(self.approval_references)}: {approval_reference.reference}"
+                    )
+                    payment = self._payment_for_reference(approval_reference, used_rows)
+                    if not payment:
+                        result = self._build_result(
+                            approval_reference,
+                            None,
+                            "Needs manual review",
+                            "No matching Excel row found for this template; approval run stopped",
+                        )
+                        self._emit_and_store(results, result)
+                        break
+
+                    stage = "before approval"
+                    try:
+                        current_details = self._search_details(page, approval_reference.reference)
+                        current_decision = build_approval_precheck_decision(
+                            payment,
+                            approval_reference.reference,
+                            current_details["text"],
+                        )
+                        if not current_decision.can_approve:
+                            result = self._build_result(
+                                approval_reference,
+                                payment,
+                                current_decision.status,
+                                current_decision.details,
+                                current_details if current_decision.status == "Skipped - already processed" else None,
+                            )
+                            self._emit_and_store(results, result)
+                            if current_decision.status != "Skipped - already processed":
+                                break
+                            continue
+
+                        verify_details = self._search_verify_details(page, approval_reference.reference)
+                        verify_decision = build_approval_precheck_decision(
+                            payment,
+                            approval_reference.reference,
+                            verify_details["text"],
+                        )
+                        if not verify_decision.can_approve:
+                            result = self._build_result(
+                                approval_reference,
+                                payment,
+                                verify_decision.status,
+                                f"Verify-page gate failed: {verify_decision.details}",
+                            )
+                            self._emit_and_store(results, result)
+                            break
+
+                        stage = "after verify click before OK"
+                        self._click_verify(page, approval_reference.reference)
+                        self._fill_pacs_verify_form(page, payment, approval_reference.reference)
+                        stage = "after OK click"
+                        success_text = self._submit_verify_form(page, approval_reference.reference)
+
+                        try:
+                            final_details = self._search_details(page, approval_reference.reference)
+                            post_audit = compare_payment_details(
+                                payment,
+                                approval_reference.reference,
+                                final_details["text"],
+                            )
+                            if post_audit.issues:
+                                result = self._build_result(
+                                    approval_reference,
+                                    payment,
+                                    "Status unknown",
+                                    "Approved submit succeeded, but post-approval detail check found: "
+                                    + "; ".join(post_audit.issues),
+                                    final_details,
+                                )
+                                self._emit_and_store(results, result)
+                                break
+
+                            result = self._build_result(
+                                approval_reference,
+                                payment,
+                                "Approved",
+                                success_text or "Message is successfully approved",
+                                final_details,
+                            )
+                        except Exception as final_exc:
+                            result = self._build_result(
+                                approval_reference,
+                                payment,
+                                "Approved",
+                                f"{success_text or 'Message is successfully approved'}; payment copy capture failed: {final_exc}",
+                            )
+
+                        self._emit_and_store(results, result)
+                    except Exception as exc:
+                        if stage == "after verify click before OK":
+                            status = "Failed after verify click before OK"
+                        elif stage == "after OK click":
+                            status = "Status unknown"
+                        else:
+                            status = "Failed before approval"
+                        result = self._build_result(
+                            approval_reference,
+                            payment,
+                            status,
+                            f"Approval run failed at stage '{stage}': {exc}",
+                        )
+                        self._emit_and_store(results, result)
+                        break
+
+                approved_count = sum(1 for result in results if result.get("status") == "Approved")
+                self.signals.finished.emit({
+                    "status": "approval_run",
+                    "message": f"PACS approval run complete: {approved_count} approved, {len(results)} checked",
+                    "results": results,
+                })
+        except Exception as exc:
+            self.signals.error.emit(f"Approval run error: {exc}")
+        finally:
+            try:
+                if context:
+                    context.close()
+                if browser:
+                    browser.close()
+                if cdp_process and cdp_process.poll() is None:
+                    cdp_process.terminate()
+            except Exception:
+                pass
+
+
 # Main application window
 class SimplePaymentApp(QMainWindow):
     # Class variable for storing the original window title
@@ -1750,6 +2051,11 @@ class SimplePaymentApp(QMainWindow):
         self.approval_audit_btn.setObjectName("primaryButton")
         self.approval_audit_btn.clicked.connect(self._start_approval_audit)
         action_layout.addWidget(self.approval_audit_btn)
+
+        self.approval_run_btn = QPushButton("Run PACS Approval")
+        self.approval_run_btn.setObjectName("primaryButton")
+        self.approval_run_btn.clicked.connect(self._start_approval_run)
+        action_layout.addWidget(self.approval_run_btn)
         refs_layout.addLayout(action_layout)
 
         results_group = QGroupBox("Audit Results")
@@ -2079,6 +2385,8 @@ class SimplePaymentApp(QMainWindow):
             self.approval_clear_btn.setEnabled(False)
         if hasattr(self, "approval_audit_btn"):
             self.approval_audit_btn.setEnabled(False)
+        if hasattr(self, "approval_run_btn"):
+            self.approval_run_btn.setEnabled(False)
         
         # Start the spinner animations
         self.start_spinner.setVisible(True)
@@ -2130,6 +2438,7 @@ class SimplePaymentApp(QMainWindow):
         self.clear_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
         self.approval_audit_btn.setEnabled(False)
+        self.approval_run_btn.setEnabled(False)
         self.approval_browse_btn.setEnabled(False)
         self.approval_clear_btn.setEnabled(False)
 
@@ -2138,6 +2447,64 @@ class SimplePaymentApp(QMainWindow):
         self.header_status_label.setText("Audit running")
 
         self.worker = ApprovalAuditWorker(username, password, approval_references, self.payments_data)
+        self.worker_thread = QThread()
+        self.worker.moveToThread(self.worker_thread)
+        self.worker.signals.progress.connect(self._update_progress)
+        self.worker.signals.error.connect(self._handle_error)
+        self.worker.signals.finished.connect(self._handle_finished)
+        self.worker_thread.started.connect(self.worker.run)
+        self.worker_thread.start()
+
+    def _start_approval_run(self):
+        if not self.payments_data:
+            self.statusBar.showMessage("Error: Load the Excel file before running PACS approval")
+            return
+
+        approval_references = parse_reference_lines(self.approval_refs_input.toPlainText())
+        if not approval_references:
+            self.statusBar.showMessage("Error: Paste approval references before running PACS approval")
+            return
+
+        username = self.username_input.text()
+        password = self.password_input.text()
+        if not username or not password:
+            self.statusBar.showMessage("Error: Username and password are required")
+            return
+
+        confirmation = QMessageBox.question(
+            self,
+            "Run PACS Approval",
+            "This will approve PACS payments in GTExchange by clicking Verify and Ok. "
+            "CZK/MT101 payments will be left for manual review. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmation != QMessageBox.StandardButton.Yes:
+            self.statusBar.showMessage("PACS approval cancelled")
+            return
+
+        self._update_value_dates_from_table()
+        self._populate_approval_pending_results(approval_references)
+        self._clear_payment_copies()
+        self.last_error_message = ""
+        self.copy_error_btn.setEnabled(False)
+
+        self.username_input.setEnabled(False)
+        self.password_input.setEnabled(False)
+        self.remember_checkbox.setEnabled(False)
+        self.browse_btn.setEnabled(False)
+        self.clear_btn.setEnabled(False)
+        self.start_btn.setEnabled(False)
+        self.approval_audit_btn.setEnabled(False)
+        self.approval_run_btn.setEnabled(False)
+        self.approval_browse_btn.setEnabled(False)
+        self.approval_clear_btn.setEnabled(False)
+
+        self.status_spinner.setVisible(True)
+        self.status_spinner.start_spinning()
+        self.header_status_label.setText("Approval running")
+
+        self.worker = ApprovalRunWorker(username, password, approval_references, self.payments_data)
         self.worker_thread = QThread()
         self.worker.moveToThread(self.worker_thread)
         self.worker.signals.progress.connect(self._update_progress)
@@ -2196,7 +2563,12 @@ class SimplePaymentApp(QMainWindow):
         # Regular progress message
         self.statusBar.showMessage(message)
         if hasattr(self, "header_status_label"):
-            running_text = "Audit running" if isinstance(self.worker, ApprovalAuditWorker) else "Running"
+            if isinstance(self.worker, ApprovalRunWorker):
+                running_text = "Approval running"
+            elif isinstance(self.worker, ApprovalAuditWorker):
+                running_text = "Audit running"
+            else:
+                running_text = "Running"
             self.header_status_label.setText(running_text if self.worker else "Ready")
         QApplication.processEvents()  # Process UI events to update immediately
     
@@ -2371,7 +2743,7 @@ class SimplePaymentApp(QMainWindow):
             self.export_audit_pdf_btn.setEnabled(self._has_matched_approval_results())
 
     def _has_matched_approval_results(self):
-        return any(result.get("status") == "Match" for result in self.last_approval_results)
+        return any(is_reportable_payment_copy_result(result) for result in self.last_approval_results)
 
     def _payment_copies_text(self):
         text = "\n\n".join(self.payment_copies_by_reference.values())
@@ -2430,7 +2802,9 @@ class SimplePaymentApp(QMainWindow):
         dialog.exec()
 
     def _export_approval_audit_pdf(self):
-        matched_results = [result for result in self.last_approval_results if result.get("status") == "Match"]
+        matched_results = [
+            result for result in self.last_approval_results if is_reportable_payment_copy_result(result)
+        ]
         if not matched_results:
             self.statusBar.showMessage("No matched approval payment copies to export")
             return
@@ -2493,6 +2867,15 @@ class SimplePaymentApp(QMainWindow):
                 self._populate_payment_copies(results)
                 self.statusBar.showMessage(result.get("message", "Approval dry-run complete"))
                 self.header_status_label.setText("Audit complete")
+                self._cleanup_worker()
+                return
+
+            if result.get("status") == "approval_run":
+                results = result.get("results", [])
+                self._populate_approval_results(results)
+                self._populate_payment_copies(results)
+                self.statusBar.showMessage(result.get("message", "PACS approval run complete"))
+                self.header_status_label.setText("Approval complete")
                 self._cleanup_worker()
                 return
 
@@ -2755,10 +3138,16 @@ class SimplePaymentApp(QMainWindow):
         dialog.exec()
 
     def _apply_approval_result_style(self, row, status):
-        if status == "Match":
+        if status in {"Match", "Approved", "Skipped - already processed"}:
             bg_color = QColor(24, 84, 58) if self.dark_mode else QColor(222, 247, 232)
             text_color = QColor(235, 255, 244) if self.dark_mode else QColor(18, 83, 48)
-        elif status == "Needs manual review":
+        elif status in {
+            "Needs manual review",
+            "Failed before approval",
+            "Failed after verify click before OK",
+            "Status unknown",
+            "Search/read failed",
+        }:
             bg_color = QColor(112, 42, 48) if self.dark_mode else QColor(255, 226, 226)
             text_color = QColor(255, 241, 241) if self.dark_mode else QColor(126, 30, 30)
         else:
@@ -2787,6 +3176,8 @@ class SimplePaymentApp(QMainWindow):
         self.start_btn.setEnabled(bool(self.payments_data))
         if hasattr(self, "approval_audit_btn"):
             self.approval_audit_btn.setEnabled(True)
+        if hasattr(self, "approval_run_btn"):
+            self.approval_run_btn.setEnabled(True)
         if hasattr(self, "approval_browse_btn"):
             self.approval_browse_btn.setEnabled(True)
         if hasattr(self, "approval_clear_btn"):

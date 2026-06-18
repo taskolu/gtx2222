@@ -71,6 +71,136 @@ class AuditResult:
     parsed: ParsedPaymentDetails = field(default_factory=ParsedPaymentDetails)
 
 
+@dataclass(frozen=True)
+class ApprovalConfirmationValues:
+    currency: str
+    amount: str
+    value_date: str
+
+
+@dataclass(frozen=True)
+class ApprovalPrecheckDecision:
+    can_approve: bool
+    status: str
+    details: str
+    page_status: str = ""
+
+
+APPROVAL_ELIGIBLE_STATUS = "MESSAGE AWAITING VERIFICATION"
+APPROVAL_ALREADY_PROCESSED_STATUSES = {
+    "MESSAGE ARCHIVED",
+    "MESSAGE AWAITING ARCHIVING",
+    "MESSAGE VERIFIED",
+    "MESSAGE PROCESSED",
+}
+REPORTABLE_PAYMENT_COPY_STATUSES = {
+    "Match",
+    "Approved",
+    "Skipped - already processed",
+}
+APPROVAL_STATUS_VALUES = [
+    APPROVAL_ELIGIBLE_STATUS,
+    *sorted(APPROVAL_ALREADY_PROCESSED_STATUSES),
+]
+
+
+def supports_pacs_approval(payment):
+    source_code = str(payment.get("source_code") or "").strip()
+    template = approval_template_name(payment)
+    resolved = resolve_payment_template(source_code) or resolve_payment_template(template)
+    return bool(resolved and resolved.uses_pacs_flow)
+
+
+def approval_confirmation_values(payment):
+    amount_code = str(payment.get("source_code") or approval_template_name(payment))
+    return ApprovalConfirmationValues(
+        currency=expected_currency(payment),
+        amount=format_amount(payment.get("amount"), amount_code),
+        value_date=normalize_date(payment.get("value_date")),
+    )
+
+
+def approval_page_status(details_text):
+    normalized = re.sub(r"\s+", " ", str(details_text or "")).upper()
+    for status in APPROVAL_STATUS_VALUES:
+        if f"STATUS {status}" in normalized:
+            return status
+    return ""
+
+
+def approval_status_is_eligible(status):
+    return str(status or "").strip().upper() == APPROVAL_ELIGIBLE_STATUS
+
+
+def approval_status_is_already_processed(status):
+    return str(status or "").strip().upper() in APPROVAL_ALREADY_PROCESSED_STATUSES
+
+
+def build_approval_precheck_decision(payment, gtx_reference, details_text):
+    if not supports_pacs_approval(payment):
+        return ApprovalPrecheckDecision(
+            can_approve=False,
+            status="Needs manual review",
+            details="CZK/MT101 approval is manual in this version; PACS-only approval automation was not run",
+        )
+
+    page_status = approval_page_status(details_text)
+    if approval_status_is_already_processed(page_status):
+        audit_result = compare_payment_details(payment, gtx_reference, details_text)
+        if audit_result.issues:
+            return ApprovalPrecheckDecision(
+                can_approve=False,
+                status="Needs manual review",
+                details=(
+                    "GTExchange status is already processed, but details do not match Excel: "
+                    + "; ".join(audit_result.issues)
+                ),
+                page_status=page_status,
+            )
+
+        return ApprovalPrecheckDecision(
+            can_approve=False,
+            status="Skipped - already processed",
+            details=f"GTExchange status already processed: {page_status}",
+            page_status=page_status,
+        )
+
+    if not approval_status_is_eligible(page_status):
+        detail = f"GTExchange status is not eligible for approval: {page_status or 'missing'}"
+        return ApprovalPrecheckDecision(
+            can_approve=False,
+            status="Failed before approval",
+            details=detail,
+            page_status=page_status,
+        )
+
+    audit_result = compare_payment_details(payment, gtx_reference, details_text)
+    if audit_result.issues:
+        return ApprovalPrecheckDecision(
+            can_approve=False,
+            status="Failed before approval",
+            details="; ".join(audit_result.issues),
+            page_status=page_status,
+        )
+
+    return ApprovalPrecheckDecision(
+        can_approve=True,
+        status="Ready for approval",
+        details="All checked fields match",
+        page_status=page_status,
+    )
+
+
+def is_reportable_payment_copy_result(result):
+    return (
+        str(result.get("status") or "") in REPORTABLE_PAYMENT_COPY_STATUSES
+        and (
+            bool(str(result.get("payment_copy") or "").strip())
+            or bool(str(result.get("payment_copy_html") or "").strip())
+        )
+    )
+
+
 def parse_reference_lines(text):
     references = []
     for raw_line in str(text or "").splitlines():
@@ -151,7 +281,7 @@ def extract_gtexchange_print_view_html(raw_html, gtx_reference="", fallback_text
 
 
 def build_approval_audit_html(results, excel_file="", run_date=""):
-    matched_results = [result for result in (results or []) if result.get("status") == "Match"]
+    matched_results = [result for result in (results or []) if is_reportable_payment_copy_result(result)]
     copy_sections = []
     for index, result in enumerate(matched_results):
         copy_sections.append(

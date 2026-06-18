@@ -1,7 +1,12 @@
 import unittest
 
 from approval_audit import (
+    approval_confirmation_values,
+    approval_page_status,
+    approval_status_is_already_processed,
+    approval_status_is_eligible,
     approval_template_name,
+    build_approval_precheck_decision,
     build_approval_audit_html,
     compare_payment_details,
     expected_to_bic,
@@ -11,6 +16,8 @@ from approval_audit import (
     parse_legacy_payment_details,
     parse_payment_details,
     parse_reference_lines,
+    is_reportable_payment_copy_result,
+    supports_pacs_approval,
 )
 
 
@@ -84,6 +91,16 @@ B - Transaction Details
                                    0,OTR6591545
 (71A) Details of Charges           OUR
 """
+
+VERIFY_READY_DETAILS_TEXT = DETAILS_TEXT.replace(
+    "Unit\n\nCCT_CHUK",
+    "Unit\n\nCCT_CHUK\n\nStatus MESSAGE AWAITING VERIFICATION",
+)
+
+ARCHIVED_DETAILS_TEXT = DETAILS_TEXT.replace(
+    "Unit\n\nCCT_CHUK",
+    "Unit\n\nCCT_CHUK\n\nStatus MESSAGE ARCHIVED",
+)
 
 
 class ApprovalAuditTests(unittest.TestCase):
@@ -209,6 +226,154 @@ class ApprovalAuditTests(unittest.TestCase):
         self.assertEqual(approval_template_name(payment), "APCHFPACS")
         self.assertEqual(expected_to_bic(payment), "BOFACH2XXXX")
 
+    def test_pacs_approval_confirmation_values_are_safe_to_type(self):
+        values = approval_confirmation_values(
+            {
+                "amount": 1721621.07,
+                "source_code": "USDBNYCHKINC",
+                "template": "APUSDPACS",
+                "value_date": "12.06.2026",
+            }
+        )
+
+        self.assertEqual(values.currency, "USD")
+        self.assertEqual(values.amount, "1721621.07")
+        self.assertEqual(values.value_date, "12.06.2026")
+
+    def test_pacs_approval_confirmation_uses_zero_decimal_currency_rules(self):
+        values = approval_confirmation_values(
+            {
+                "amount": 660436,
+                "source_code": "JPYCUKCIT",
+                "template": "APJPYPACS",
+                "value_date": "15.Jun,26",
+            }
+        )
+
+        self.assertEqual(values.currency, "JPY")
+        self.assertEqual(values.amount, "660436")
+        self.assertEqual(values.value_date, "15.06.2026")
+
+    def test_supports_pacs_approval_skips_czk_mt101(self):
+        self.assertTrue(
+            supports_pacs_approval({"source_code": "USDBNYCHKINC", "template": "APUSDPACS"})
+        )
+        self.assertFalse(
+            supports_pacs_approval(
+                {"source_code": "CZKCUKKOM", "template": "APFUNDINGCZK", "uses_pacs_flow": False}
+            )
+        )
+
+    def test_approval_page_status_normalizes_eligible_status(self):
+        status = approval_page_status(
+            """
+            Unit CCT_CHUK
+            Priority N
+            Status MESSAGE AWAITING VERIFICATION
+            """
+        )
+
+        self.assertEqual(status, "MESSAGE AWAITING VERIFICATION")
+
+    def test_approval_page_status_stops_on_archived_status(self):
+        status = approval_page_status(
+            """
+            Unit TGBP
+            Status MESSAGE ARCHIVED
+            """
+        )
+
+        self.assertEqual(status, "MESSAGE ARCHIVED")
+        self.assertTrue(approval_status_is_already_processed(status))
+        self.assertFalse(approval_status_is_eligible(status))
+
+    def test_approval_precheck_allows_matching_pacs_waiting_for_verification(self):
+        payment = {
+            "amount": 1721621.07,
+            "source_code": "USDBNYCHKINC",
+            "unit": "CCT_CHUK",
+            "reference": "CO5590",
+            "otr_number": (
+                "OTR6591745,OTR6591747,OTR6591681,OTR6591279,OTR6591128,"
+                "OTR6591131,OTR6588253,OTR6588442,OTR6590458,OTR6591675,"
+                "OTR6591678,OTR6"
+            ),
+            "value_date": "12.06.2026",
+        }
+
+        decision = build_approval_precheck_decision(payment, "E008260612AOCYQL", VERIFY_READY_DETAILS_TEXT)
+
+        self.assertTrue(decision.can_approve)
+        self.assertEqual(decision.status, "Ready for approval")
+        self.assertEqual(decision.details, "All checked fields match")
+
+    def test_approval_precheck_skips_already_processed_payment(self):
+        payment = {
+            "amount": 1721621.07,
+            "source_code": "USDBNYCHKINC",
+            "unit": "CCT_CHUK",
+            "reference": "CO5590",
+            "otr_number": "OTR6591745",
+            "value_date": "12.06.2026",
+        }
+
+        decision = build_approval_precheck_decision(payment, "E008260612AOCYQL", ARCHIVED_DETAILS_TEXT)
+
+        self.assertFalse(decision.can_approve)
+        self.assertEqual(decision.status, "Skipped - already processed")
+        self.assertIn("MESSAGE ARCHIVED", decision.details)
+
+    def test_approval_precheck_blocks_already_processed_payment_with_mismatch(self):
+        payment = {
+            "amount": 1721622.07,
+            "source_code": "USDBNYCHKINC",
+            "unit": "CCT_CHUK",
+            "reference": "CO5590",
+            "otr_number": "OTR6591745",
+            "value_date": "12.06.2026",
+        }
+
+        decision = build_approval_precheck_decision(payment, "E008260612AOCYQL", ARCHIVED_DETAILS_TEXT)
+
+        self.assertFalse(decision.can_approve)
+        self.assertEqual(decision.status, "Needs manual review")
+        self.assertIn("already processed, but details do not match", decision.details.lower())
+        self.assertIn("amount mismatch", decision.details.lower())
+
+    def test_approval_precheck_keeps_czk_mt101_manual(self):
+        payment = {
+            "amount": 366972.95,
+            "source_code": "CZKCUKKOM",
+            "template": "APFUNDINGCZK",
+            "uses_pacs_flow": False,
+            "unit": "CCT_CHUK",
+            "reference": "CO5590",
+            "otr_number": "OTR6591560,OTR6591640,OTR6591545",
+            "value_date": "15.06.2026",
+        }
+
+        decision = build_approval_precheck_decision(payment, "E101260612AOCYQW", CZK_DETAILS_TEXT)
+
+        self.assertFalse(decision.can_approve)
+        self.assertEqual(decision.status, "Needs manual review")
+        self.assertIn("CZK/MT101 approval is manual", decision.details)
+
+    def test_approval_precheck_blocks_mismatched_details(self):
+        payment = {
+            "amount": 1721622.07,
+            "source_code": "USDBNYCHKINC",
+            "unit": "CCT_CHUK",
+            "reference": "CO5590",
+            "otr_number": "OTR6591745",
+            "value_date": "12.06.2026",
+        }
+
+        decision = build_approval_precheck_decision(payment, "E008260612AOCYQL", VERIFY_READY_DETAILS_TEXT)
+
+        self.assertFalse(decision.can_approve)
+        self.assertEqual(decision.status, "Failed before approval")
+        self.assertIn("amount mismatch", decision.details.lower())
+
     def test_parse_legacy_czk_payment_details(self):
         details = parse_legacy_payment_details(CZK_DETAILS_TEXT)
 
@@ -310,6 +475,33 @@ class ApprovalAuditTests(unittest.TestCase):
         self.assertNotIn("Approval Audit Pack", html)
         self.assertNotIn("Amount mismatch", html)
         self.assertNotIn("E008260612AOCYOF", html)
+
+    def test_build_approval_audit_html_includes_approved_payment_copies(self):
+        html = build_approval_audit_html(
+            [
+                {
+                    "template": "APUSDPACS",
+                    "reference": "E008260612AOCYQL",
+                    "status": "Approved",
+                    "payment_copy_html": (
+                        '<div class="headerPrintView"><table><tr><td><pre>Unit</pre></td></tr></table></div>'
+                        '<pre><span class="bodyStdLabelTrueType completeDataDisplay">To : IRVTUS3NXXX</span></pre>'
+                    ),
+                }
+            ]
+        )
+
+        self.assertIn("E008260612AOCYQL", html)
+        self.assertIn("To : IRVTUS3NXXX", html)
+
+    def test_reportable_payment_copy_statuses_exclude_manual_review(self):
+        self.assertTrue(is_reportable_payment_copy_result({"status": "Match", "payment_copy": "copy"}))
+        self.assertTrue(is_reportable_payment_copy_result({"status": "Approved", "payment_copy": "copy"}))
+        self.assertTrue(
+            is_reportable_payment_copy_result({"status": "Skipped - already processed", "payment_copy": "copy"})
+        )
+        self.assertFalse(is_reportable_payment_copy_result({"status": "Needs manual review", "payment_copy": "copy"}))
+        self.assertFalse(is_reportable_payment_copy_result({"status": "Approved", "payment_copy": ""}))
 
     def test_extract_gtexchange_print_view_html_keeps_print_header_and_body(self):
         raw_html = """
