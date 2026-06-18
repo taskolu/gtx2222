@@ -2,6 +2,7 @@ import unittest
 
 from approval_audit import (
     approval_confirmation_values,
+    approval_flow,
     approval_page_status,
     approval_status_is_already_processed,
     approval_status_is_eligible,
@@ -17,6 +18,7 @@ from approval_audit import (
     parse_payment_details,
     parse_reference_lines,
     is_reportable_payment_copy_result,
+    supports_automated_approval,
     supports_pacs_approval,
 )
 
@@ -100,6 +102,11 @@ VERIFY_READY_DETAILS_TEXT = DETAILS_TEXT.replace(
 ARCHIVED_DETAILS_TEXT = DETAILS_TEXT.replace(
     "Unit\n\nCCT_CHUK",
     "Unit\n\nCCT_CHUK\n\nStatus MESSAGE ARCHIVED",
+)
+
+VERIFY_READY_CZK_DETAILS_TEXT = CZK_DETAILS_TEXT.replace(
+    "Unit\n\nCCT_CHUK",
+    "Unit\n\nCCT_CHUK\n\nStatus MESSAGE AWAITING VERIFICATION",
 )
 
 
@@ -254,7 +261,7 @@ class ApprovalAuditTests(unittest.TestCase):
         self.assertEqual(values.amount, "660436")
         self.assertEqual(values.value_date, "15.06.2026")
 
-    def test_supports_pacs_approval_skips_czk_mt101(self):
+    def test_approval_flow_distinguishes_pacs_and_czk_mt101(self):
         self.assertTrue(
             supports_pacs_approval({"source_code": "USDBNYCHKINC", "template": "APUSDPACS"})
         )
@@ -262,6 +269,15 @@ class ApprovalAuditTests(unittest.TestCase):
             supports_pacs_approval(
                 {"source_code": "CZKCUKKOM", "template": "APFUNDINGCZK", "uses_pacs_flow": False}
             )
+        )
+        self.assertTrue(
+            supports_automated_approval(
+                {"source_code": "CZKCUKKOM", "template": "APFUNDINGCZK", "uses_pacs_flow": False}
+            )
+        )
+        self.assertEqual(
+            approval_flow({"source_code": "CZKCUKKOM", "template": "APFUNDINGCZK", "uses_pacs_flow": False}),
+            "mt101",
         )
 
     def test_approval_page_status_normalizes_eligible_status(self):
@@ -340,7 +356,7 @@ class ApprovalAuditTests(unittest.TestCase):
         self.assertIn("already processed, but details do not match", decision.details.lower())
         self.assertIn("amount mismatch", decision.details.lower())
 
-    def test_approval_precheck_keeps_czk_mt101_manual(self):
+    def test_approval_precheck_allows_matching_czk_mt101_waiting_for_verification(self):
         payment = {
             "amount": 366972.95,
             "source_code": "CZKCUKKOM",
@@ -352,11 +368,11 @@ class ApprovalAuditTests(unittest.TestCase):
             "value_date": "15.06.2026",
         }
 
-        decision = build_approval_precheck_decision(payment, "E101260612AOCYQW", CZK_DETAILS_TEXT)
+        decision = build_approval_precheck_decision(payment, "E101260612AOCYQW", VERIFY_READY_CZK_DETAILS_TEXT)
 
-        self.assertFalse(decision.can_approve)
-        self.assertEqual(decision.status, "Needs manual review")
-        self.assertIn("CZK/MT101 approval is manual", decision.details)
+        self.assertTrue(decision.can_approve)
+        self.assertEqual(decision.status, "Ready for approval")
+        self.assertEqual(decision.details, "All checked fields match")
 
     def test_approval_precheck_blocks_mismatched_details(self):
         payment = {

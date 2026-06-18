@@ -18,6 +18,7 @@ import subprocess
 import json
 from approval_audit import (
     approval_confirmation_values,
+    approval_flow,
     build_approval_precheck_decision,
     approval_template_name,
     build_approval_audit_html,
@@ -1573,6 +1574,41 @@ class ApprovalRunWorker(ApprovalAuditWorker):
         self._assert_verify_edit_page_matches_locked_payment(page, payment, gtx_reference)
         return values
 
+    def _click_verify_cell(self, page, name):
+        cell = page.get_by_role("cell", name=name, exact=True).first
+        cell.wait_for(timeout=15000)
+        cell.click(timeout=15000)
+        page.wait_for_timeout(200)
+
+    def _fill_mt101_verify_form(self, page, payment, gtx_reference):
+        self._assert_verify_edit_page_matches_locked_payment(page, payment, gtx_reference)
+        values = approval_confirmation_values(payment)
+        if not values.currency or not values.amount:
+            raise ValueError("Missing expected currency or amount for CZK/MT101 approval confirmation")
+
+        self._click_verify_cell(page, "Currency")
+        entered_currency = self._fill_and_read_input(page, "You can enter currency ISO", values.currency)
+
+        self._click_verify_cell(page, "Amount")
+        entered_amount = self._fill_and_read_input(page, "Enter amount with a dot as", values.amount)
+
+        if entered_currency.upper() != values.currency:
+            raise ValueError(f"CZK/MT101 currency read-back mismatch: expected {values.currency}, found {entered_currency}")
+
+        if normalize_amount(entered_amount) != normalize_amount(values.amount):
+            raise ValueError(f"CZK/MT101 amount read-back mismatch: expected {values.amount}, found {entered_amount}")
+
+        self._assert_verify_edit_page_matches_locked_payment(page, payment, gtx_reference)
+        return values
+
+    def _fill_verify_form(self, page, payment, gtx_reference):
+        flow = approval_flow(payment)
+        if flow == "pacs":
+            return self._fill_pacs_verify_form(page, payment, gtx_reference)
+        if flow == "mt101":
+            return self._fill_mt101_verify_form(page, payment, gtx_reference)
+        raise ValueError("No automated approval form flow is configured for this payment")
+
     def _submit_verify_form(self, page, gtx_reference):
         self.signals.progress.emit(f"Submitting approval for {gtx_reference}...")
         page.get_by_role("button", name="Ok").click(timeout=15000)
@@ -1592,7 +1628,7 @@ class ApprovalRunWorker(ApprovalAuditWorker):
         used_rows = set()
 
         try:
-            self.signals.progress.emit("Starting PACS approval run...")
+            self.signals.progress.emit("Starting approval run...")
             with sync_playwright() as p:
                 browser, context, page, cdp_process = self._launch_page(p)
                 self._login(page)
@@ -1602,7 +1638,7 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                         break
 
                     self.signals.progress.emit(
-                        f"PACS approval {index}/{len(self.approval_references)}: {approval_reference.reference}"
+                        f"Approval {index}/{len(self.approval_references)}: {approval_reference.reference}"
                     )
                     payment = self._payment_for_reference(approval_reference, used_rows)
                     if not payment:
@@ -1654,7 +1690,7 @@ class ApprovalRunWorker(ApprovalAuditWorker):
 
                         stage = "after verify click before OK"
                         self._click_verify(page, approval_reference.reference)
-                        self._fill_pacs_verify_form(page, payment, approval_reference.reference)
+                        self._fill_verify_form(page, payment, approval_reference.reference)
                         stage = "after OK click"
                         success_text = self._submit_verify_form(page, approval_reference.reference)
 
@@ -1712,7 +1748,7 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                 approved_count = sum(1 for result in results if result.get("status") == "Approved")
                 self.signals.finished.emit({
                     "status": "approval_run",
-                    "message": f"PACS approval run complete: {approved_count} approved, {len(results)} checked",
+                    "message": f"Approval run complete: {approved_count} approved, {len(results)} checked",
                     "results": results,
                 })
         except Exception as exc:
@@ -2052,7 +2088,7 @@ class SimplePaymentApp(QMainWindow):
         self.approval_audit_btn.clicked.connect(self._start_approval_audit)
         action_layout.addWidget(self.approval_audit_btn)
 
-        self.approval_run_btn = QPushButton("Run PACS Approval")
+        self.approval_run_btn = QPushButton("Run Approval")
         self.approval_run_btn.setObjectName("primaryButton")
         self.approval_run_btn.clicked.connect(self._start_approval_run)
         action_layout.addWidget(self.approval_run_btn)
@@ -2457,12 +2493,12 @@ class SimplePaymentApp(QMainWindow):
 
     def _start_approval_run(self):
         if not self.payments_data:
-            self.statusBar.showMessage("Error: Load the Excel file before running PACS approval")
+            self.statusBar.showMessage("Error: Load the Excel file before running approval")
             return
 
         approval_references = parse_reference_lines(self.approval_refs_input.toPlainText())
         if not approval_references:
-            self.statusBar.showMessage("Error: Paste approval references before running PACS approval")
+            self.statusBar.showMessage("Error: Paste approval references before running approval")
             return
 
         username = self.username_input.text()
@@ -2473,14 +2509,14 @@ class SimplePaymentApp(QMainWindow):
 
         confirmation = QMessageBox.question(
             self,
-            "Run PACS Approval",
-            "This will approve PACS payments in GTExchange by clicking Verify and Ok. "
-            "CZK/MT101 payments will be left for manual review. Continue?",
+            "Run Approval",
+            "This will approve matching PACS and CZK/MT101 payments in GTExchange by clicking Verify and Ok. "
+            "Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if confirmation != QMessageBox.StandardButton.Yes:
-            self.statusBar.showMessage("PACS approval cancelled")
+            self.statusBar.showMessage("Approval cancelled")
             return
 
         self._update_value_dates_from_table()
@@ -2858,6 +2894,35 @@ class SimplePaymentApp(QMainWindow):
             return
 
         self.statusBar.showMessage(f"Matched payment copies PDF exported: {file_path}")
+
+    def _auto_export_approval_run_pdf(self, results):
+        reportable_results = [
+            result for result in (results or []) if is_reportable_payment_copy_result(result)
+        ]
+        if not reportable_results:
+            return ""
+
+        downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+        if not os.path.isdir(downloads_dir):
+            downloads_dir = os.path.expanduser("~")
+        file_path = os.path.join(
+            downloads_dir,
+            f"approval_payment_copies_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+        )
+
+        excel_file = ""
+        if hasattr(self, "approval_file_path_input"):
+            excel_file = self.approval_file_path_input.text().strip()
+        if not excel_file:
+            excel_file = self.file_path_input.text().strip()
+
+        report_html = build_approval_audit_html(
+            reportable_results,
+            excel_file=os.path.basename(excel_file) if excel_file else "",
+            run_date=datetime.now().strftime("%d-%b-%Y %H:%M"),
+        )
+        render_html_pdf_with_playwright(report_html, file_path, sync_playwright)
+        return file_path
         
     def _handle_finished(self, result):
         if isinstance(result, dict):
@@ -2874,9 +2939,26 @@ class SimplePaymentApp(QMainWindow):
                 results = result.get("results", [])
                 self._populate_approval_results(results)
                 self._populate_payment_copies(results)
-                self.statusBar.showMessage(result.get("message", "PACS approval run complete"))
                 self.header_status_label.setText("Approval complete")
                 self._cleanup_worker()
+                try:
+                    pdf_path = self._auto_export_approval_run_pdf(results)
+                except Exception as exc:
+                    error_message = f"Approval run complete, but PDF export failed: {exc}"
+                    self.last_error_message = error_message
+                    self.copy_error_btn.setEnabled(True)
+                    self.statusBar.showMessage(error_message)
+                    self._show_error_details(error_message)
+                    return
+
+                if pdf_path:
+                    self.statusBar.showMessage(
+                        f"{result.get('message', 'Approval run complete')} - PDF saved: {pdf_path}"
+                    )
+                else:
+                    self.statusBar.showMessage(
+                        f"{result.get('message', 'Approval run complete')} - no payment copies to export"
+                    )
                 return
 
             message = result.get("message", "Automation completed")

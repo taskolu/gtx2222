@@ -111,6 +111,23 @@ def supports_pacs_approval(payment):
     return bool(resolved and resolved.uses_pacs_flow)
 
 
+def approval_flow(payment):
+    source_code = str(payment.get("source_code") or "").strip()
+    template = approval_template_name(payment)
+    resolved = resolve_payment_template(source_code) or resolve_payment_template(template)
+    if not resolved:
+        return ""
+    if resolved.uses_pacs_flow:
+        return "pacs"
+    if resolved.template == "APFUNDINGCZK":
+        return "mt101"
+    return ""
+
+
+def supports_automated_approval(payment):
+    return approval_flow(payment) in {"pacs", "mt101"}
+
+
 def approval_confirmation_values(payment):
     amount_code = str(payment.get("source_code") or approval_template_name(payment))
     return ApprovalConfirmationValues(
@@ -137,11 +154,11 @@ def approval_status_is_already_processed(status):
 
 
 def build_approval_precheck_decision(payment, gtx_reference, details_text):
-    if not supports_pacs_approval(payment):
+    if not supports_automated_approval(payment):
         return ApprovalPrecheckDecision(
             can_approve=False,
             status="Needs manual review",
-            details="CZK/MT101 approval is manual in this version; PACS-only approval automation was not run",
+            details="No automated approval flow is configured for this payment template",
         )
 
     page_status = approval_page_status(details_text)
