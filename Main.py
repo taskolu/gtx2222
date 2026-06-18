@@ -2515,7 +2515,7 @@ class SimplePaymentApp(QMainWindow):
 
         approval_references = parse_reference_lines(self.approval_refs_input.toPlainText())
         if not approval_references:
-            self.statusBar.showMessage("Error: Paste approval references before running audit")
+            self.statusBar.showMessage("Error: Paste approval references before running approval")
             return
 
         username = self.username_input.text()
@@ -3081,7 +3081,7 @@ class SimplePaymentApp(QMainWindow):
                 row,
                 self._approval_result_from_payment(
                     payment,
-                    details="Paste approval references, then run dry audit",
+                    details="Paste approval references, then run approval",
                 ),
             )
 
@@ -3137,7 +3137,7 @@ class SimplePaymentApp(QMainWindow):
             return ""
         if text.startswith("All checked fields match"):
             return text
-        if text in {"Waiting for audit", "Paste approval references, then run dry audit"}:
+        if text in {"Waiting for audit", "Paste approval references, then run approval"}:
             return text
         if text.startswith("Search/read failed"):
             return "Search/read failed"
