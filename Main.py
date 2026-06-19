@@ -31,6 +31,7 @@ from approval_audit import (
     build_approval_precheck_decision,
     approval_template_name,
     build_approval_audit_html,
+    build_payment_copy_preview_html,
     compact_text,
     compare_payment_details,
     expected_to_bic,
@@ -3245,7 +3246,21 @@ class SimplePaymentApp(QMainWindow):
             return
         item = self.report_reference_table.item(selected_rows[0].row(), 0)
         reference = item.text().strip() if item else ""
-        self.report_payment_preview.setPlainText(self.payment_copies_by_reference.get(reference, ""))
+        result = next(
+            (
+                stored_result
+                for stored_result in self.last_approval_results
+                if str(stored_result.get("reference") or "").strip() == reference
+            ),
+            None,
+        )
+        if not result:
+            result = {
+                "reference": reference,
+                "status": "Approved",
+                "payment_copy": self.payment_copies_by_reference.get(reference, ""),
+            }
+        self.report_payment_preview.setHtml(build_payment_copy_preview_html(result))
 
     def _has_matched_approval_results(self):
         return any(is_reportable_payment_copy_result(result) for result in self.last_approval_results)

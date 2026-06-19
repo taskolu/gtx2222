@@ -362,6 +362,10 @@ def build_approval_audit_html(results, excel_file="", run_date=""):
 </html>"""
 
 
+def build_payment_copy_preview_html(result):
+    return build_approval_audit_html([result] if result else [])
+
+
 def _first_match(pattern, text, flags=re.IGNORECASE):
     match = re.search(pattern, text, flags)
     return match.group(1).strip() if match else ""

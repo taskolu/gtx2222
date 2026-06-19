@@ -10,6 +10,7 @@ from approval_audit import (
     approval_template_name,
     build_approval_precheck_decision,
     build_approval_audit_html,
+    build_payment_copy_preview_html,
     compare_payment_details,
     expected_to_bic,
     extract_gtexchange_print_view_html,
@@ -529,6 +530,19 @@ class ApprovalAuditTests(unittest.TestCase):
 
         self.assertIn("E008260612AOCYQL", html)
         self.assertIn("To : IRVTUS3NXXX", html)
+
+    def test_build_payment_copy_preview_html_renders_one_styled_payment(self):
+        html = build_payment_copy_preview_html({
+            "template": "APUSDPACS",
+            "reference": "E008260612AOCYQL",
+            "status": "Approved",
+            "payment_copy": "Fallback payment text",
+        })
+
+        self.assertIn("E008260612AOCYQL", html)
+        self.assertIn("Fallback payment text", html)
+        self.assertIn("border: 2px solid #4d4d4d", html)
+        self.assertNotIn('class="payment-separator"', html)
 
     def test_reportable_payment_copy_statuses_exclude_manual_review(self):
         self.assertTrue(is_reportable_payment_copy_result({"status": "Match", "payment_copy": "copy"}))
