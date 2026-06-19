@@ -5,8 +5,11 @@ import browser_launch
 
 
 class BrowserLaunchTests(unittest.TestCase):
-    def test_verify_search_timeout_is_three_seconds(self):
-        self.assertEqual(browser_launch.VERIFY_SEARCH_TIMEOUT_MS, 3000)
+    def test_verify_response_allows_server_fifteen_seconds(self):
+        self.assertEqual(browser_launch.VERIFY_SEARCH_TIMEOUT_MS, 15000)
+
+    def test_verify_warning_ok_wait_is_three_seconds(self):
+        self.assertEqual(browser_launch.VERIFY_WARNING_OK_TIMEOUT_MS, 3000)
 
     def test_verify_warning_requires_a_visible_ok_button(self):
         class FakeWarning:

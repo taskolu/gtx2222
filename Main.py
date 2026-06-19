@@ -1536,7 +1536,10 @@ class ApprovalRunWorker(ApprovalAuditWorker):
             except Exception:
                 pass
             page.wait_for_timeout(poll_interval_ms)
-        raise VerifyReferenceNotFound(f"{gtx_reference} was not found in Verify Messages after 3 seconds")
+        timeout_seconds = VERIFY_SEARCH_TIMEOUT_MS // 1000
+        raise VerifyReferenceNotFound(
+            f"{gtx_reference} was not found in Verify Messages after {timeout_seconds} seconds"
+        )
 
     def _search_verify_details(self, page, gtx_reference):
         self._open_verify_page(page)
