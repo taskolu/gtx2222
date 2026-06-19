@@ -51,6 +51,7 @@ from payment_mapping import (
     resolve_payment_template,
 )
 from browser_launch import (
+    VERIFY_SEARCH_TIMEOUT_MS,
     build_edge_cdp_args,
     dismiss_verify_no_search_warning,
     get_browser_launch_options,
@@ -1524,7 +1525,9 @@ class ApprovalRunWorker(ApprovalAuditWorker):
 
     def _wait_for_verify_search_result(self, page, gtx_reference):
         reference_link = page.get_by_role("link", name=gtx_reference)
-        for _ in range(75):
+        poll_interval_ms = 200
+        poll_attempts = max(1, VERIFY_SEARCH_TIMEOUT_MS // poll_interval_ms)
+        for _ in range(poll_attempts):
             if self._dismiss_verify_no_search_warning(page):
                 raise VerifyReferenceNotFound(f"{gtx_reference} was not found in Verify Messages")
             try:
@@ -1532,8 +1535,8 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                     return reference_link
             except Exception:
                 pass
-            page.wait_for_timeout(200)
-        raise VerifyReferenceNotFound(f"{gtx_reference} was not found in Verify Messages after 15 seconds")
+            page.wait_for_timeout(poll_interval_ms)
+        raise VerifyReferenceNotFound(f"{gtx_reference} was not found in Verify Messages after 3 seconds")
 
     def _search_verify_details(self, page, gtx_reference):
         self._open_verify_page(page)

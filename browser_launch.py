@@ -4,6 +4,9 @@ import time
 import urllib.request
 
 
+VERIFY_SEARCH_TIMEOUT_MS = 3000
+
+
 def dismiss_verify_no_search_warning(page, timeout_ms=2000, on_progress=None):
     warning = page.get_by_text("No search item found").first
     try:
