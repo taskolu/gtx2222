@@ -5,8 +5,10 @@ import unittest
 from app_config import (
     DEFAULT_FUNDING_REFERENCE,
     default_settings,
+    display_funding_reference,
     load_settings,
     normalize_settings,
+    parse_funding_reference,
     save_settings,
 )
 
@@ -69,6 +71,11 @@ class AppConfigTests(unittest.TestCase):
             loaded = load_settings(path, home_dir=temp_dir)
 
         self.assertEqual(loaded["funding_reference"], "CO7000")
+
+    def test_funding_reference_display_round_trip(self):
+        self.assertEqual(display_funding_reference("CO5590"), "Funding CO5590")
+        self.assertEqual(parse_funding_reference("Funding CO5590"), "CO5590")
+        self.assertEqual(parse_funding_reference("CO5590"), "CO5590")
 
 
 if __name__ == "__main__":

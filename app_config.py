@@ -24,6 +24,17 @@ DEFAULT_APPROVAL_RULES = [
 ]
 
 
+def parse_funding_reference(value):
+    text = str(value or "").strip()
+    if text.lower().startswith("funding "):
+        text = text[8:].strip()
+    return text or DEFAULT_FUNDING_REFERENCE
+
+
+def display_funding_reference(value):
+    return f"Funding {parse_funding_reference(value)}"
+
+
 def config_dir(home_dir=None):
     return os.path.join(home_dir or os.path.expanduser("~"), APP_CONFIG_DIR)
 

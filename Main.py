@@ -20,7 +20,9 @@ import approval_audit
 from app_config import (
     approval_bic_mapping,
     default_settings,
+    display_funding_reference,
     load_settings,
+    parse_funding_reference,
     save_settings,
 )
 from approval_audit import (
@@ -1772,6 +1774,12 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                         break
 
                     payments_by_reference[approval_reference.reference] = payment
+                    self._emit_live_result(
+                        approval_reference,
+                        payment,
+                        "Checking",
+                        "Starting approval checks for this locked reference",
+                    )
                     stage = "before approval"
                     try:
                         try:
@@ -2063,9 +2071,9 @@ class SimplePaymentApp(QMainWindow):
         self.approval_file_path_input = self.file_path_input
         self.approval_browse_btn = self.browse_btn
         self.approval_clear_btn = self.clear_btn
-        setup_frame = QFrame()
-        setup_frame.setObjectName("setupFrame")
-        setup_frame.setLayout(setup_layout)
+        self.setup_frame = QFrame()
+        self.setup_frame.setObjectName("setupFrame")
+        self.setup_frame.setLayout(setup_layout)
         setup_layout.addWidget(login_group, 1)
         setup_layout.addWidget(excel_group, 2)
 
@@ -2147,9 +2155,10 @@ class SimplePaymentApp(QMainWindow):
         self.workflow_tabs.addTab(entry_tab, "Payment Entry")
         self.workflow_tabs.addTab(self._build_approval_tab(), "Approval")
         self.workflow_tabs.addTab(self._build_reports_tab(), "Reports")
+        self.workflow_tabs.currentChanged.connect(self._handle_workflow_tab_changed)
 
         main_layout.addWidget(header_frame)
-        main_layout.addWidget(setup_frame)
+        main_layout.addWidget(self.setup_frame)
         main_layout.addWidget(self.workflow_tabs)
         
         # Status bar with better styling
@@ -2165,6 +2174,10 @@ class SimplePaymentApp(QMainWindow):
         
         # Load saved credentials if available
         self._load_credentials()
+
+    def _handle_workflow_tab_changed(self, index):
+        is_reports_tab = self.workflow_tabs.tabText(index) == "Reports"
+        self.setup_frame.setVisible(not is_reports_tab)
 
     def _build_approval_tab(self):
         tab = QWidget()
@@ -2437,22 +2450,6 @@ class SimplePaymentApp(QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        browser_group = QGroupBox("Browser")
-        browser_layout = QGridLayout(browser_group)
-        browser_layout.setContentsMargins(14, 18, 14, 14)
-        browser_path_input = QLineEdit(str(self.app_settings.get("browser_path") or ""))
-        browser_path_input.setPlaceholderText("Optional bundled or installed browser executable path")
-        browser_status_label = QLabel("Configured path optional; app uses bundled browser when available")
-        browser_browse_btn = QPushButton("Browse")
-        browser_browse_btn.setObjectName("secondaryButton")
-        test_browser_btn = QPushButton("Test Browser")
-        test_browser_btn.setObjectName("secondaryButton")
-        browser_layout.addWidget(QLabel("Browser path:"), 0, 0)
-        browser_layout.addWidget(browser_path_input, 0, 1)
-        browser_layout.addWidget(browser_browse_btn, 0, 2)
-        browser_layout.addWidget(browser_status_label, 1, 1)
-        browser_layout.addWidget(test_browser_btn, 1, 2)
-
         output_group = QGroupBox("Output")
         output_layout = QGridLayout(output_group)
         output_layout.setContentsMargins(14, 18, 14, 14)
@@ -2484,48 +2481,21 @@ class SimplePaymentApp(QMainWindow):
         defaults_group = QGroupBox("Defaults")
         defaults_layout = QGridLayout(defaults_group)
         defaults_layout.setContentsMargins(14, 18, 14, 14)
-        funding_reference_input = QLineEdit(self._default_funding_reference())
-        funding_reference_input.setFixedWidth(140)
+        funding_reference_input = QLineEdit(display_funding_reference(self._default_funding_reference()))
+        funding_reference_input.setFixedWidth(180)
         stop_on_failure_checkbox = QCheckBox("Stop approval on first failure")
         stop_on_failure_checkbox.setChecked(bool(self.app_settings.get("stop_approval_on_first_failure", True)))
         defaults_layout.addWidget(QLabel("Funding reference:"), 0, 0)
         defaults_layout.addWidget(funding_reference_input, 0, 1)
         defaults_layout.addWidget(stop_on_failure_checkbox, 1, 1)
 
-        def browse_browser():
-            file_path, _ = QFileDialog.getOpenFileName(dialog, "Select Browser Executable", os.path.expanduser("~"))
-            if file_path:
-                browser_path_input.setText(file_path)
-
         def browse_output():
             folder = QFileDialog.getExistingDirectory(dialog, "Select Reports Folder", output_folder_input.text())
             if folder:
                 output_folder_input.setText(folder)
 
-        def test_browser():
-            candidate = browser_path_input.text().strip()
-            if candidate and not os.path.exists(candidate):
-                browser_status_label.setText("Configured browser path does not exist")
-                return
-            old_env = os.environ.get("GTX_BROWSER_PATH")
-            try:
-                if candidate:
-                    os.environ["GTX_BROWSER_PATH"] = candidate
-                else:
-                    os.environ.pop("GTX_BROWSER_PATH", None)
-                options = get_browser_launch_options()
-                browser_status_label.setText(f"Launch mode ready: {options.get('executable_path') or options.get('channel')}")
-            finally:
-                if old_env is None:
-                    os.environ.pop("GTX_BROWSER_PATH", None)
-                else:
-                    os.environ["GTX_BROWSER_PATH"] = old_env
-
-        browser_browse_btn.clicked.connect(browse_browser)
         output_browse_btn.clicked.connect(browse_output)
-        test_browser_btn.clicked.connect(test_browser)
 
-        layout.addWidget(browser_group)
         layout.addWidget(output_group)
         layout.addWidget(rules_group, 1)
         layout.addWidget(defaults_group)
@@ -2560,9 +2530,9 @@ class SimplePaymentApp(QMainWindow):
 
         def save_dialog_settings():
             self.app_settings = save_settings({
-                "browser_path": browser_path_input.text().strip(),
+                "browser_path": self.app_settings.get("browser_path", ""),
                 "output_folder": output_folder_input.text().strip(),
-                "funding_reference": funding_reference_input.text().strip(),
+                "funding_reference": parse_funding_reference(funding_reference_input.text()),
                 "stop_approval_on_first_failure": stop_on_failure_checkbox.isChecked(),
                 "approval_rules": collect_rules(),
             })
@@ -3601,6 +3571,8 @@ class SimplePaymentApp(QMainWindow):
         details = str(result.get("details") or "")
         if status == "Verify details matched":
             return "Details matched Excel"
+        if status == "Checking":
+            return "Opening Verify"
         if status == "Confirmation values checked":
             return "Amount / CCY / Date read back"
         if status == "Approved":
@@ -3628,6 +3600,10 @@ class SimplePaymentApp(QMainWindow):
         }
         status = str(status or "")
         current_check = str(current_check or "")
+
+        if status == "Checking":
+            gates["verify_found"] = "active"
+            return gates
 
         if status in {"Needs manual review", "Failed before approval", "Search/read failed"}:
             gates["verify_found"] = "failed"
