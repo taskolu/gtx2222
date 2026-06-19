@@ -1515,8 +1515,9 @@ class ApprovalRunWorker(ApprovalAuditWorker):
     def _dismiss_verify_no_search_warning(self, page):
         try:
             warning_text = page.get_by_text("No search item found").first
-            warning_text.wait_for(timeout=1500)
-            text = warning_text.inner_text(timeout=1500)
+            if not warning_text.is_visible(timeout=100):
+                return False
+            text = warning_text.inner_text(timeout=500)
             if not is_verify_no_search_item_warning(text):
                 return False
 
@@ -1525,10 +1526,23 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                 page.get_by_role("button", name="OK").click(timeout=5000)
             except Exception:
                 page.locator('input[value="OK"], button:has-text("OK")').first.click(timeout=5000)
-            page.wait_for_timeout(500)
+            page.wait_for_timeout(100)
             return True
         except Exception:
             return False
+
+    def _wait_for_verify_search_result(self, page, gtx_reference):
+        reference_link = page.get_by_role("link", name=gtx_reference)
+        for _ in range(75):
+            if self._dismiss_verify_no_search_warning(page):
+                raise VerifyReferenceNotFound(f"{gtx_reference} was not found in Verify Messages")
+            try:
+                if reference_link.is_visible(timeout=100):
+                    return reference_link
+            except Exception:
+                pass
+            page.wait_for_timeout(200)
+        raise VerifyReferenceNotFound(f"{gtx_reference} was not found in Verify Messages after 15 seconds")
 
     def _search_verify_details(self, page, gtx_reference):
         self._open_verify_page(page)
@@ -1540,14 +1554,10 @@ class ApprovalRunWorker(ApprovalAuditWorker):
         reference_input.fill(gtx_reference)
         page.wait_for_timeout(500)
         page.get_by_role("button", name="Search").click()
-        try:
-            page.get_by_role("link", name=gtx_reference).wait_for(timeout=15000)
-        except Exception as exc:
-            self._dismiss_verify_no_search_warning(page)
-            raise VerifyReferenceNotFound(f"{gtx_reference} was not found in Verify Messages") from exc
+        reference_link = self._wait_for_verify_search_result(page, gtx_reference)
         self.signals.progress.emit(f"Opening verify details for {gtx_reference}...")
         try:
-            page.get_by_role("link", name=gtx_reference).click(timeout=30000)
+            reference_link.click(timeout=30000)
         except Exception:
             page.locator(f'a:has-text("{gtx_reference}")').first.click(timeout=30000)
         page.locator("#container-body").wait_for(timeout=30000)
