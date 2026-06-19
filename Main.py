@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QGroupBox, QStatusBar, QGridLayout, QCheckBox,
     QCalendarWidget, QScrollArea, QDialog, QFrame, QStyle, QAbstractItemView,
-    QTextEdit, QTabWidget
+    QTextEdit, QTabWidget, QStyledItemDelegate
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QDate, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, QPainter, QBrush, QKeySequence, QShortcut
@@ -53,6 +53,19 @@ from payment_mapping import (
 )
 from browser_launch import build_edge_cdp_args, get_browser_launch_options, wait_for_cdp_endpoint
 from pdf_export import render_html_pdf_with_playwright
+
+
+class WideCellEditorDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None, minimum_width=160):
+        super().__init__(parent)
+        self.minimum_width = minimum_width
+
+    def updateEditorGeometry(self, editor, option, index):
+        rect = QRect(option.rect)
+        parent_width = editor.parentWidget().width() if editor.parentWidget() else rect.width()
+        editor_width = min(max(rect.width(), self.minimum_width), parent_width)
+        editor_x = max(0, min(rect.x(), rect.right() - editor_width + 1))
+        editor.setGeometry(editor_x, rect.y(), editor_width, rect.height())
 
 # SpinningIcon class - a QLabel that displays a spinning image
 class SpinningIcon(QLabel):
@@ -2119,7 +2132,7 @@ class SimplePaymentApp(QMainWindow):
         self.table_widget.setColumnWidth(3, 95)
         self.table_widget.setColumnWidth(4, 95)
         self.table_widget.setColumnWidth(5, 165)
-        self.table_widget.setColumnWidth(6, 95)
+        self.table_widget.setColumnWidth(6, 125)
         self.table_widget.setAlternatingRowColors(True)
         self.table_widget.verticalHeader().setVisible(False)
         self.table_widget.setShowGrid(False)
@@ -2128,6 +2141,8 @@ class SimplePaymentApp(QMainWindow):
             QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked
         )
         self.table_widget.setWordWrap(False)
+        self.value_date_editor_delegate = WideCellEditorDelegate(self.table_widget, minimum_width=170)
+        self.table_widget.setItemDelegateForColumn(6, self.value_date_editor_delegate)
         
         # Connect double-click event for Value Date column
         self.table_widget.cellDoubleClicked.connect(self._show_calendar)
@@ -2545,6 +2560,14 @@ class SimplePaymentApp(QMainWindow):
         save_btn.clicked.connect(save_dialog_settings)
         cancel_btn.clicked.connect(dialog.reject)
         dialog.exec()
+
+    def _read_only_payment_item(self, value):
+        text = str(value or "")
+        item = QTableWidgetItem(text)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        if text:
+            item.setToolTip(text)
+        return item
     
     def _process_data(self, df):
         # Clear existing data
@@ -2672,16 +2695,17 @@ class SimplePaymentApp(QMainWindow):
                 # Add row to table
                 table_row = self.table_widget.rowCount()
                 self.table_widget.insertRow(table_row)
-                self.table_widget.setItem(table_row, 0, QTableWidgetItem(f"{amount:,.2f}"))
-                self.table_widget.setItem(table_row, 1, QTableWidgetItem(template))
-                self.table_widget.setItem(table_row, 2, QTableWidgetItem(otr))
-                self.table_widget.setItem(table_row, 3, QTableWidgetItem(unit))
-                self.table_widget.setItem(table_row, 4, QTableWidgetItem("Pending"))
-                self.table_widget.setItem(table_row, 5, QTableWidgetItem(""))  # Empty reference
+                self.table_widget.setItem(table_row, 0, self._read_only_payment_item(f"{amount:,.2f}"))
+                self.table_widget.setItem(table_row, 1, self._read_only_payment_item(template))
+                self.table_widget.setItem(table_row, 2, self._read_only_payment_item(otr))
+                self.table_widget.setItem(table_row, 3, self._read_only_payment_item(unit))
+                self.table_widget.setItem(table_row, 4, self._read_only_payment_item("Pending"))
+                self.table_widget.setItem(table_row, 5, self._read_only_payment_item(""))
                 
                 # Add value date column (editable)
                 date_item = QTableWidgetItem(value_date)
                 date_item.setFlags(date_item.flags() | Qt.ItemFlag.ItemIsEditable)
+                date_item.setToolTip(value_date)
                 self.table_widget.setItem(table_row, 6, date_item)
                 self.table_widget.setRowHeight(table_row, 30)
                 
@@ -3021,7 +3045,7 @@ class SimplePaymentApp(QMainWindow):
             self.statusBar.showMessage(f"Could not update status for payment #{row_num}: row not found")
             return
 
-        self.table_widget.setItem(row_idx, 4, QTableWidgetItem(status))
+        self.table_widget.setItem(row_idx, 4, self._read_only_payment_item(status))
         self._apply_row_status_style(row_idx, status)
         self._update_summary()
         QApplication.processEvents()
@@ -3035,8 +3059,8 @@ class SimplePaymentApp(QMainWindow):
             self.statusBar.showMessage(f"Could not update reference for payment #{row_num}: row not found")
             return
 
-        self.table_widget.setItem(row_idx, 5, QTableWidgetItem(reference))
-        self.table_widget.setItem(row_idx, 4, QTableWidgetItem("Completed"))
+        self.table_widget.setItem(row_idx, 5, self._read_only_payment_item(reference))
+        self.table_widget.setItem(row_idx, 4, self._read_only_payment_item("Completed"))
         self._apply_row_status_style(row_idx, "Completed")
         self._update_summary()
         QApplication.processEvents()
