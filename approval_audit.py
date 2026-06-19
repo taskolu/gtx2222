@@ -7,6 +7,9 @@ from decimal import Decimal, InvalidOperation
 from payment_mapping import build_narrative, format_amount, resolve_payment_template
 
 
+VERIFY_REFERENCE_WAIT_MS = 3000
+
+
 EXPECTED_TO_BIC_BY_TEMPLATE = {
     "APAUDPACS": "NATAAU3302S",
     "APCHFPACS": "BOFACH2XXXX",

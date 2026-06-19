@@ -2,6 +2,7 @@ import unittest
 from datetime import datetime
 
 from approval_audit import (
+    VERIFY_REFERENCE_WAIT_MS,
     approval_confirmation_values,
     approval_flow,
     approval_page_status,
@@ -116,6 +117,9 @@ VERIFY_READY_CZK_DETAILS_TEXT = CZK_DETAILS_TEXT.replace(
 
 
 class ApprovalAuditTests(unittest.TestCase):
+    def test_verify_reference_wait_is_three_seconds(self):
+        self.assertEqual(VERIFY_REFERENCE_WAIT_MS, 3000)
+
     def test_parse_reference_lines(self):
         refs = parse_reference_lines(
             "APAUDPACS: E008260612AOCYOF\n"

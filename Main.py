@@ -26,6 +26,7 @@ from app_config import (
     save_settings,
 )
 from approval_audit import (
+    VERIFY_REFERENCE_WAIT_MS,
     approval_confirmation_values,
     approval_flow,
     build_approval_precheck_decision,
@@ -39,6 +40,7 @@ from approval_audit import (
     format_payment_copy,
     is_reportable_payment_copy_result,
     is_successful_approval_result_status,
+    is_verify_no_search_item_warning,
     normalize_amount,
     normalize_date,
     parse_reference_lines,
@@ -51,9 +53,7 @@ from payment_mapping import (
     resolve_payment_template,
 )
 from browser_launch import (
-    VERIFY_SEARCH_TIMEOUT_MS,
     build_edge_cdp_args,
-    dismiss_verify_no_search_warning,
     get_browser_launch_options,
     wait_for_cdp_endpoint,
 )
@@ -1518,28 +1518,22 @@ class ApprovalRunWorker(ApprovalAuditWorker):
         self.signals.progress.emit("Verify page ready")
 
     def _dismiss_verify_no_search_warning(self, page):
-        return dismiss_verify_no_search_warning(
-            page,
-            on_progress=self.signals.progress.emit,
-        )
+        try:
+            warning_text = page.get_by_text("No search item found").first
+            warning_text.wait_for(timeout=1500)
+            text = warning_text.inner_text(timeout=1500)
+            if not is_verify_no_search_item_warning(text):
+                return False
 
-    def _wait_for_verify_search_result(self, page, gtx_reference):
-        reference_link = page.get_by_role("link", name=gtx_reference)
-        poll_interval_ms = 200
-        poll_attempts = max(1, VERIFY_SEARCH_TIMEOUT_MS // poll_interval_ms)
-        for _ in range(poll_attempts):
-            if self._dismiss_verify_no_search_warning(page):
-                raise VerifyReferenceNotFound(f"{gtx_reference} was not found in Verify Messages")
+            self.signals.progress.emit("Verify search returned no item; closing warning popup")
             try:
-                if reference_link.is_visible(timeout=100):
-                    return reference_link
+                page.get_by_role("button", name="OK").click(timeout=5000)
             except Exception:
-                pass
-            page.wait_for_timeout(poll_interval_ms)
-        timeout_seconds = VERIFY_SEARCH_TIMEOUT_MS // 1000
-        raise VerifyReferenceNotFound(
-            f"{gtx_reference} was not found in Verify Messages after {timeout_seconds} seconds"
-        )
+                page.locator('input[value="OK"], button:has-text("OK")').first.click(timeout=5000)
+            page.wait_for_timeout(500)
+            return True
+        except Exception:
+            return False
 
     def _search_verify_details(self, page, gtx_reference):
         self._open_verify_page(page)
@@ -1551,10 +1545,18 @@ class ApprovalRunWorker(ApprovalAuditWorker):
         reference_input.fill(gtx_reference)
         page.wait_for_timeout(500)
         page.get_by_role("button", name="Search").click()
-        reference_link = self._wait_for_verify_search_result(page, gtx_reference)
+        try:
+            page.get_by_role("link", name=gtx_reference).wait_for(
+                timeout=VERIFY_REFERENCE_WAIT_MS
+            )
+        except Exception as exc:
+            self._dismiss_verify_no_search_warning(page)
+            raise VerifyReferenceNotFound(
+                f"{gtx_reference} was not found in Verify Messages"
+            ) from exc
         self.signals.progress.emit(f"Opening verify details for {gtx_reference}...")
         try:
-            reference_link.click(timeout=30000)
+            page.get_by_role("link", name=gtx_reference).click(timeout=30000)
         except Exception:
             page.locator(f'a:has-text("{gtx_reference}")').first.click(timeout=30000)
         page.locator("#container-body").wait_for(timeout=30000)
