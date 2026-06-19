@@ -4677,32 +4677,34 @@ class InstructionsDialog(QDialog):
         bullet_color = "#CCCCCC" if self.dark_mode else "#444444"
         tip_color = "#AAAAAA" if self.dark_mode else "#666666"
         
-        # Add the instruction sections
+        # Keep the in-app guide focused on daily operational use.
         sections = [
-            ("1. Login", [
-                "• Enter your GTExchange username and password",
-                "• Check \"Remember me\" to save credentials for future sessions"
+            ("Payment Entry", [
+                "Load Excel and review the payment table.",
+                "Only Value Date can be edited.",
+                "Click Start Automation and complete OTP in the browser.",
+                "Review errors, then copy the generated references."
             ]),
-            ("2. Load Payments", [
-                "• Click \"Browse\" to select an Excel file with payment data",
-                "• Required columns: Amount, Template, OTR Number",
-                "• Invalid rows will be automatically skipped",
-                "• ⚠️ IMPORTANT: Close Excel files before uploading - cannot access files that are open in Excel"
+            ("Approval", [
+                "Load Excel and paste Template: GTX Reference lines.",
+                "Confirm Approval Results populate correctly.",
+                "Click Run Approval and complete OTP in the browser.",
+                "Automation stops on mismatches or uncertain results."
             ]),
-            ("3. Review Payments", [
-                "• Check payment details in the table before processing",
-                "• Double-click on Value Date cells to modify dates using the calendar",
-                "• Dates cannot be set in the past"
+            ("Approval Checks", [
+                "Shows progress for the currently locked reference.",
+                "Amount, currency, date, BIC, unit, remittance, and reference are checked.",
+                "Never rely on checks shown for another payment."
             ]),
-            ("4. Start Automation", [
-                "• Click \"Start Automation\" to begin processing payments",
-                "• When prompted, enter the OTP code in the browser window",
-                "• The status bar will show real-time progress updates"
+            ("Reports", [
+                "Select a GTX reference to preview its payment copy.",
+                "Export the combined PDF after successful approval.",
+                "Payments needing review are excluded."
             ]),
-            ("5. After Completion", [
-                "• Successfully processed payments will be highlighted in green",
-                "• Each payment will display its reference number",
-                "• Click \"Copy References\" to copy all references to clipboard"
+            ("Important", [
+                "Check Error, Needs manual review, and Status unknown manually in GTExchange.",
+                "GTExchange remains the source of truth.",
+                "Do not rerun an uncertain payment until its status is confirmed."
             ])
         ]
         
@@ -4714,7 +4716,7 @@ class InstructionsDialog(QDialog):
             
             # Bullets
             for bullet in bullets:
-                bullet_label = QLabel(bullet)
+                bullet_label = QLabel(f"- {bullet}")
                 bullet_label.setWordWrap(True)
                 bullet_label.setStyleSheet(f"font-size: 14px; margin-left: 20px; color: {bullet_color};")
                 content_layout.addWidget(bullet_label)
