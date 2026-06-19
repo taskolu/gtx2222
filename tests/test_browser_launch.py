@@ -103,6 +103,70 @@ class BrowserLaunchTests(unittest.TestCase):
         self.assertTrue(button.clicked)
         self.assertTrue(warning.hidden_waited)
 
+    def test_verify_warning_clicks_ok_exposed_as_table_cell(self):
+        class FakeWarning:
+            first = None
+
+            def __init__(self):
+                self.first = self
+                self.hidden_waited = False
+
+            def is_visible(self, timeout):
+                return True
+
+            def inner_text(self, timeout):
+                return "No search item found"
+
+            def wait_for(self, state, timeout):
+                self.hidden_waited = state == "hidden"
+
+        class FakeCell:
+            def __init__(self):
+                self.clicked = False
+
+            def is_visible(self, timeout):
+                return True
+
+            def click(self, timeout):
+                self.clicked = True
+
+        class LocatorList:
+            def __init__(self, items=()):
+                self.items = items
+
+            def count(self):
+                return len(self.items)
+
+            def nth(self, index):
+                return self.items[index]
+
+        warning = FakeWarning()
+        ok_cell = FakeCell()
+
+        class FakePage:
+            def get_by_text(self, text):
+                return warning
+
+            def get_by_role(self, role, name, exact):
+                if role == "cell" and name == "OK":
+                    return LocatorList((ok_cell,))
+                return LocatorList()
+
+            def locator(self, selector):
+                return LocatorList()
+
+            def wait_for_timeout(self, milliseconds):
+                pass
+
+        dismissed = browser_launch.dismiss_verify_no_search_warning(
+            FakePage(),
+            timeout_ms=0,
+        )
+
+        self.assertTrue(dismissed)
+        self.assertTrue(ok_cell.clicked)
+        self.assertTrue(warning.hidden_waited)
+
     def test_bundled_edge_cdp_args_disable_renderer_code_integrity(self):
         args = browser_launch.build_edge_cdp_args(
             "msedge.exe",

@@ -25,23 +25,24 @@ def dismiss_verify_no_search_warning(
     if on_progress:
         on_progress("Verify search returned no item; closing warning popup")
 
-    button_locators = (
+    ok_locators = (
+        page.get_by_role("cell", name="OK", exact=True),
         page.get_by_role("button", name="OK", exact=True),
         page.locator('input[value="OK"]:visible, button:visible:has-text("OK")'),
     )
     deadline = time.monotonic() + (timeout_ms / 1000)
     while True:
-        for buttons in button_locators:
+        for candidates in ok_locators:
             try:
-                count = buttons.count()
+                count = candidates.count()
             except Exception:
                 continue
             for index in range(count):
-                button = buttons.nth(index)
+                ok_control = candidates.nth(index)
                 try:
-                    if not button.is_visible(timeout=50):
+                    if not ok_control.is_visible(timeout=50):
                         continue
-                    button.click(timeout=3000)
+                    ok_control.click(timeout=3000)
                     warning.wait_for(state="hidden", timeout=3000)
                     return True
                 except Exception as exc:
