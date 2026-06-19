@@ -89,6 +89,15 @@ class BrowserLaunchTests(unittest.TestCase):
                 {"channel": "msedge", "headless": False},
             )
 
+    def test_configured_browser_path_takes_precedence(self):
+        with patch.dict("browser_launch.os.environ", {"GTX_BROWSER_PATH": "C:/Tools/msedge.exe"}), \
+                patch("browser_launch.os.path.exists", return_value=True):
+            options = browser_launch.get_browser_launch_options()
+
+        self.assertEqual(options["executable_path"], "C:/Tools/msedge.exe")
+        self.assertFalse(options["headless"])
+        self.assertTrue(options["use_cdp"])
+
     def test_uses_bundled_browser_when_executable_exists(self):
         def fake_exists(path):
             return path.endswith("chromium-1179/chrome-win/chrome.exe")

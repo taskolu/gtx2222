@@ -53,6 +53,13 @@ def get_bundled_browser_executable(base_path=None):
 
 
 def get_browser_launch_options():
+    configured_executable = os.environ.get("GTX_BROWSER_PATH", "").strip()
+    if configured_executable and os.path.exists(configured_executable):
+        options = {"executable_path": configured_executable, "headless": False}
+        if os.path.basename(configured_executable).lower() == "msedge.exe":
+            options["use_cdp"] = True
+        return options
+
     bundled_executable = get_bundled_browser_executable(
         os.path.join(sys._MEIPASS, "browsers") if getattr(sys, "frozen", False) else None
     )

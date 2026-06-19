@@ -16,6 +16,13 @@ from PyQt6.QtGui import QColor, QAction, QIcon, QPalette, QPixmap, QTransform, Q
 import re
 import subprocess
 import json
+import approval_audit
+from app_config import (
+    approval_bic_mapping,
+    default_settings,
+    load_settings,
+    save_settings,
+)
 from approval_audit import (
     approval_confirmation_values,
     approval_flow,
@@ -887,7 +894,7 @@ class BrowserWorker(QObject):
                                 
                                 # Add narrative with OTR number
                                 try:
-                                    base_text = "Funding CO5590"
+                                    base_text = f"Funding {str(payment.get('reference') or 'CO5590').strip()}"
                                     
                                     # Format narrative for 4 lines, 35 chars per line
                                     lines = []
@@ -1041,7 +1048,7 @@ class BrowserWorker(QObject):
                         # Enter narrative with OTR number
                         try:
                             # Base text with spaces included
-                            base_text = "Funding CO5590"
+                            base_text = f"Funding {str(payment.get('reference') or 'CO5590').strip()}"
                             
                             # Format narrative for 4 lines, 35 chars per line
                             lines = []
@@ -1860,12 +1867,12 @@ class ApprovalRunWorker(ApprovalAuditWorker):
 # Main application window
 class SimplePaymentApp(QMainWindow):
     # Class variable for storing the original window title
-    BASE_WINDOW_TITLE = "Payments Release - GTExchange Payment Automation"
+    BASE_WINDOW_TITLE = "Payments Release - AP Funding Payment Automation"
     
     def __init__(self):
         super().__init__()
         self.setWindowTitle(self.BASE_WINDOW_TITLE)
-        self.setGeometry(100, 100, 1035, 805)  # Increased by 15% from 900x700
+        self.setGeometry(100, 100, 1220, 840)
         
         # Set application icon
         icon_found = False
@@ -1896,6 +1903,8 @@ class SimplePaymentApp(QMainWindow):
         self.last_error_message = ""
         self.payment_copies_by_reference = {}
         self.last_approval_results = []
+        self.app_settings = load_settings()
+        self.last_report_pdf_path = ""
         
         # Setup UI
         self._setup_ui()
@@ -1934,9 +1943,9 @@ class SimplePaymentApp(QMainWindow):
 
         title_block = QVBoxLayout()
         title_block.setSpacing(2)
-        title_label = QLabel("GTExchange Payment Automation")
+        title_label = QLabel("AP Funding Payment Automation")
         title_label.setObjectName("appTitle")
-        subtitle_label = QLabel("Weekly funding entries from Excel to GTExchange")
+        subtitle_label = QLabel("Weekly funding entries and approvals")
         subtitle_label.setObjectName("appSubtitle")
         title_block.addWidget(title_label)
         title_block.addWidget(subtitle_label)
@@ -1953,6 +1962,13 @@ class SimplePaymentApp(QMainWindow):
         self.copy_error_btn.clicked.connect(self._copy_last_error)
         self.copy_error_btn.setEnabled(False)
 
+        self.settings_btn = QPushButton()
+        self.settings_btn.setObjectName("secondaryButton")
+        self.settings_btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
+        self.settings_btn.setToolTip("Settings")
+        self.settings_btn.setFixedWidth(40)
+        self.settings_btn.clicked.connect(self._show_settings_dialog)
+
         self.dark_mode_toggle = QPushButton("Dark Mode")
         self.dark_mode_toggle.setObjectName("secondaryButton")
         self.dark_mode_toggle.setCheckable(True)
@@ -1963,6 +1979,7 @@ class SimplePaymentApp(QMainWindow):
         header_layout.addWidget(self.header_status_label)
         header_layout.addWidget(self.readme_btn)
         header_layout.addWidget(self.copy_error_btn)
+        header_layout.addWidget(self.settings_btn)
         header_layout.addWidget(self.dark_mode_toggle)
 
         self.workflow_tabs = QTabWidget()
@@ -1987,6 +2004,7 @@ class SimplePaymentApp(QMainWindow):
         username_label = QLabel("Username:")
         username_label.setFixedWidth(72)
         self.username_input = QLineEdit()
+        self.username_input.setFixedWidth(220)
         username_layout.addWidget(username_label)
         username_layout.addWidget(self.username_input)
         
@@ -1996,6 +2014,7 @@ class SimplePaymentApp(QMainWindow):
         password_label.setFixedWidth(72)
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_input.setFixedWidth(220)
         password_layout.addWidget(password_label)
         password_layout.addWidget(self.password_input)
         
@@ -2039,6 +2058,12 @@ class SimplePaymentApp(QMainWindow):
         
         excel_layout.addLayout(button_layout)
 
+        self.approval_file_path_input = self.file_path_input
+        self.approval_browse_btn = self.browse_btn
+        self.approval_clear_btn = self.clear_btn
+        setup_frame = QFrame()
+        setup_frame.setObjectName("setupFrame")
+        setup_frame.setLayout(setup_layout)
         setup_layout.addWidget(login_group, 1)
         setup_layout.addWidget(excel_group, 2)
 
@@ -2105,14 +2130,15 @@ class SimplePaymentApp(QMainWindow):
         start_btn_layout.setAlignment(self.start_spinner, Qt.AlignmentFlag.AlignVCenter)
         
         # Add widgets to main layout
-        entry_layout.addLayout(setup_layout)
         entry_layout.addWidget(data_group)
         entry_layout.addLayout(start_btn_layout)
 
         self.workflow_tabs.addTab(entry_tab, "Payment Entry")
         self.workflow_tabs.addTab(self._build_approval_tab(), "Approval")
+        self.workflow_tabs.addTab(self._build_reports_tab(), "Reports")
 
         main_layout.addWidget(header_frame)
+        main_layout.addWidget(setup_frame)
         main_layout.addWidget(self.workflow_tabs)
         
         # Status bar with better styling
@@ -2135,34 +2161,8 @@ class SimplePaymentApp(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
-        excel_group = QGroupBox("Excel Import")
-        excel_layout = QVBoxLayout(excel_group)
-        excel_layout.setContentsMargins(14, 18, 14, 14)
-        excel_layout.setSpacing(10)
-
-        self.approval_file_path_input = QLineEdit()
-        self.approval_file_path_input.setReadOnly(True)
-        self.approval_file_path_input.setPlaceholderText("Select the weekly funding Excel file")
-        excel_layout.addWidget(self.approval_file_path_input)
-
-        approval_button_layout = QHBoxLayout()
-        approval_button_layout.setSpacing(8)
-        approval_button_layout.addStretch()
-
-        self.approval_browse_btn = QPushButton("Browse")
-        self.approval_browse_btn.setObjectName("secondaryButton")
-        self.approval_browse_btn.clicked.connect(self._browse_and_load)
-        self.approval_browse_btn.setFixedWidth(80)
-        approval_button_layout.addWidget(self.approval_browse_btn)
-
-        self.approval_clear_btn = QPushButton("Clear")
-        self.approval_clear_btn.setObjectName("secondaryButton")
-        self.approval_clear_btn.clicked.connect(self._clear_data)
-        self.approval_clear_btn.setFixedWidth(80)
-        approval_button_layout.addWidget(self.approval_clear_btn)
-
-        excel_layout.addLayout(approval_button_layout)
-
+        approval_top_layout = QHBoxLayout()
+        approval_top_layout.setSpacing(12)
         refs_group = QGroupBox("Approval References")
         refs_layout = QVBoxLayout(refs_group)
         refs_layout.setContentsMargins(14, 18, 14, 14)
@@ -2181,6 +2181,9 @@ class SimplePaymentApp(QMainWindow):
         self.approval_run_btn.clicked.connect(self._start_approval_run)
         action_layout.addWidget(self.approval_run_btn)
         refs_layout.addLayout(action_layout)
+
+        approval_top_layout.addWidget(refs_group, 3)
+        approval_top_layout.addWidget(self._build_approval_checks_group(), 2)
 
         results_group = QGroupBox("Approval Results")
         results_layout = QVBoxLayout(results_group)
@@ -2204,19 +2207,20 @@ class SimplePaymentApp(QMainWindow):
         results_layout.addLayout(results_action_layout)
 
         self.approval_results_table = QTableWidget()
-        self.approval_results_table.setColumnCount(6)
+        self.approval_results_table.setColumnCount(7)
         self.approval_results_table.setHorizontalHeaderLabels([
-            "Template", "GTX Reference", "Expected Amount", "Value Date", "Result", "Details"
+            "Template", "GTX Reference", "Amount", "Value Date", "Result", "Current Check", "Details"
         ])
         approval_header = self.approval_results_table.horizontalHeader()
-        for col in range(5):
+        for col in range(6):
             approval_header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
-        approval_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        approval_header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         self.approval_results_table.setColumnWidth(0, 105)
         self.approval_results_table.setColumnWidth(1, 143)
-        self.approval_results_table.setColumnWidth(2, 116)
+        self.approval_results_table.setColumnWidth(2, 104)
         self.approval_results_table.setColumnWidth(3, 85)
-        self.approval_results_table.setColumnWidth(4, 127)
+        self.approval_results_table.setColumnWidth(4, 122)
+        self.approval_results_table.setColumnWidth(5, 150)
         self.approval_results_table.setAlternatingRowColors(True)
         self.approval_results_table.verticalHeader().setVisible(False)
         self.approval_results_table.setShowGrid(False)
@@ -2232,11 +2236,118 @@ class SimplePaymentApp(QMainWindow):
         self.approval_copy_shortcut = QShortcut(QKeySequence.StandardKey.Copy, self.approval_results_table)
         self.approval_copy_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.approval_copy_shortcut.activated.connect(self._copy_approval_results_selection)
+        self.approval_results_table.itemSelectionChanged.connect(self._refresh_selected_approval_checks)
         results_layout.addWidget(self.approval_results_table)
 
-        layout.addWidget(excel_group, 0)
-        layout.addWidget(refs_group, 0)
+        layout.addLayout(approval_top_layout)
         layout.addWidget(results_group, 2)
+        return tab
+
+    def _build_approval_checks_group(self):
+        checks_group = QGroupBox("Approval Checks")
+        checks_layout = QVBoxLayout(checks_group)
+        checks_layout.setContentsMargins(14, 18, 14, 14)
+        checks_layout.setSpacing(8)
+
+        self.approval_check_reference = QLabel("No approval reference selected")
+        self.approval_check_reference.setObjectName("approvalCheckReference")
+        checks_layout.addWidget(self.approval_check_reference)
+
+        self.approval_check_expected = QLabel("Expected: amount/date/currency pending")
+        self.approval_check_expected.setObjectName("appSubtitle")
+        checks_layout.addWidget(self.approval_check_expected)
+
+        self.approval_check_labels = {}
+        for key, label_text in (
+            ("verify_found", "Verify page found"),
+            ("details_matched", "Details matched Excel"),
+            ("verify_clicked", "Verify clicked"),
+            ("confirmation_checked", "Amount / CCY / Date read back"),
+            ("ok_clicked", "OK clicked"),
+            ("final_copy_matched", "Final search copy matched"),
+        ):
+            gate_label = QLabel(f"Pending - {label_text}")
+            gate_label.setObjectName("approvalGatePending")
+            gate_label.setMinimumHeight(24)
+            checks_layout.addWidget(gate_label)
+            self.approval_check_labels[key] = gate_label
+
+        checks_layout.addStretch()
+        return checks_group
+
+    def _build_reports_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        summary_layout = QHBoxLayout()
+        summary_layout.setSpacing(12)
+
+        summary_group = QGroupBox("Run Summary")
+        summary_group_layout = QGridLayout(summary_group)
+        summary_group_layout.setContentsMargins(14, 18, 14, 14)
+        summary_group_layout.setSpacing(8)
+        self.report_summary_labels = {}
+        for index, key in enumerate(("approved", "skipped", "review", "errors")):
+            label = QLabel(f"{key.title()}: 0")
+            label.setObjectName(f"{key}Summary")
+            self.report_summary_labels[key] = label
+            summary_group_layout.addWidget(label, index // 2, index % 2)
+        self.report_last_run_label = QLabel("Last run: not available")
+        summary_group_layout.addWidget(self.report_last_run_label, 2, 0, 1, 2)
+
+        output_group = QGroupBox("Output Files")
+        output_layout = QVBoxLayout(output_group)
+        output_layout.setContentsMargins(14, 18, 14, 14)
+        output_layout.setSpacing(8)
+        self.report_pdf_label = QLabel("Latest PDF: not created yet")
+        self.report_output_folder = QLineEdit()
+        self.report_output_folder.setReadOnly(True)
+        self.report_output_folder.setText(self._output_folder())
+        output_layout.addWidget(self.report_pdf_label)
+        output_layout.addWidget(self.report_output_folder)
+        output_buttons = QHBoxLayout()
+        output_buttons.addStretch()
+        open_folder_btn = QPushButton("Open Folder")
+        open_folder_btn.setObjectName("secondaryButton")
+        open_folder_btn.clicked.connect(self._open_output_folder)
+        output_buttons.addWidget(open_folder_btn)
+        export_btn = QPushButton("Export PDF")
+        export_btn.setObjectName("secondaryButton")
+        export_btn.clicked.connect(self._export_approval_audit_pdf)
+        output_buttons.addWidget(export_btn)
+        copy_email_btn = QPushButton("Copy Email Text")
+        copy_email_btn.setObjectName("secondaryButton")
+        copy_email_btn.clicked.connect(self._copy_payment_copies)
+        output_buttons.addWidget(copy_email_btn)
+        output_layout.addLayout(output_buttons)
+
+        summary_layout.addWidget(summary_group, 1)
+        summary_layout.addWidget(output_group, 2)
+        layout.addLayout(summary_layout)
+
+        preview_group = QGroupBox("Payment Copies Preview")
+        preview_layout = QVBoxLayout(preview_group)
+        preview_layout.setContentsMargins(14, 18, 14, 14)
+        self.report_payment_preview = QTextEdit()
+        self.report_payment_preview.setReadOnly(True)
+        self.report_payment_preview.setPlaceholderText("Approved payment copies will appear here after an approval run.")
+        preview_layout.addWidget(self.report_payment_preview)
+        layout.addWidget(preview_group, 2)
+
+        log_group = QGroupBox("Run Log")
+        log_layout = QVBoxLayout(log_group)
+        log_layout.setContentsMargins(14, 18, 14, 14)
+        self.report_log_table = QTableWidget()
+        self.report_log_table.setColumnCount(4)
+        self.report_log_table.setHorizontalHeaderLabels(["Time", "Reference", "Event", "Result"])
+        self.report_log_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.report_log_table.verticalHeader().setVisible(False)
+        self.report_log_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.report_log_table.setAlternatingRowColors(True)
+        log_layout.addWidget(self.report_log_table)
+        layout.addWidget(log_group, 1)
         return tab
     
     def _browse_and_load(self):
@@ -2270,6 +2381,161 @@ class SimplePaymentApp(QMainWindow):
             
         except Exception as e:
             self.statusBar.showMessage(f"Error: Failed to load Excel file: {str(e)}")
+
+    def _default_funding_reference(self):
+        return str(self.app_settings.get("funding_reference") or "CO5590").strip() or "CO5590"
+
+    def _apply_runtime_settings(self):
+        browser_path = str(self.app_settings.get("browser_path") or "").strip()
+        if browser_path:
+            os.environ["GTX_BROWSER_PATH"] = browser_path
+        else:
+            os.environ.pop("GTX_BROWSER_PATH", None)
+        approval_audit.EXPECTED_TO_BIC_BY_TEMPLATE.update(approval_bic_mapping(self.app_settings))
+
+    def _show_settings_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Settings")
+        dialog.resize(720, 620)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        browser_group = QGroupBox("Browser")
+        browser_layout = QGridLayout(browser_group)
+        browser_layout.setContentsMargins(14, 18, 14, 14)
+        browser_path_input = QLineEdit(str(self.app_settings.get("browser_path") or ""))
+        browser_path_input.setPlaceholderText("Optional bundled or installed browser executable path")
+        browser_status_label = QLabel("Configured path optional; app uses bundled browser when available")
+        browser_browse_btn = QPushButton("Browse")
+        browser_browse_btn.setObjectName("secondaryButton")
+        test_browser_btn = QPushButton("Test Browser")
+        test_browser_btn.setObjectName("secondaryButton")
+        browser_layout.addWidget(QLabel("Browser path:"), 0, 0)
+        browser_layout.addWidget(browser_path_input, 0, 1)
+        browser_layout.addWidget(browser_browse_btn, 0, 2)
+        browser_layout.addWidget(browser_status_label, 1, 1)
+        browser_layout.addWidget(test_browser_btn, 1, 2)
+
+        output_group = QGroupBox("Output")
+        output_layout = QGridLayout(output_group)
+        output_layout.setContentsMargins(14, 18, 14, 14)
+        output_folder_input = QLineEdit(self._output_folder())
+        output_browse_btn = QPushButton("Browse")
+        output_browse_btn.setObjectName("secondaryButton")
+        output_layout.addWidget(QLabel("Reports folder:"), 0, 0)
+        output_layout.addWidget(output_folder_input, 0, 1)
+        output_layout.addWidget(output_browse_btn, 0, 2)
+
+        rules_group = QGroupBox("Approval Rules")
+        rules_layout = QVBoxLayout(rules_group)
+        rules_layout.setContentsMargins(14, 18, 14, 14)
+        rules_table = QTableWidget()
+        rules_table.setColumnCount(3)
+        rules_table.setHorizontalHeaderLabels(["Template", "Expected To BIC", "Flow"])
+        rules_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        rules_table.verticalHeader().setVisible(False)
+        rules_table.setAlternatingRowColors(True)
+        rules = list(self.app_settings.get("approval_rules") or default_settings()["approval_rules"])
+        rules_table.setRowCount(len(rules))
+        for row, rule in enumerate(rules):
+            rules_table.setItem(row, 0, QTableWidgetItem(str(rule.get("template") or "")))
+            rules_table.setItem(row, 1, QTableWidgetItem(str(rule.get("to_bic") or "")))
+            rules_table.setItem(row, 2, QTableWidgetItem(str(rule.get("flow") or "")))
+        rules_layout.addWidget(rules_table)
+
+        defaults_group = QGroupBox("Defaults")
+        defaults_layout = QGridLayout(defaults_group)
+        defaults_layout.setContentsMargins(14, 18, 14, 14)
+        funding_reference_input = QLineEdit(self._default_funding_reference())
+        funding_reference_input.setFixedWidth(140)
+        stop_on_failure_checkbox = QCheckBox("Stop approval on first failure")
+        stop_on_failure_checkbox.setChecked(bool(self.app_settings.get("stop_approval_on_first_failure", True)))
+        defaults_layout.addWidget(QLabel("Funding reference:"), 0, 0)
+        defaults_layout.addWidget(funding_reference_input, 0, 1)
+        defaults_layout.addWidget(stop_on_failure_checkbox, 1, 1)
+
+        def browse_browser():
+            file_path, _ = QFileDialog.getOpenFileName(dialog, "Select Browser Executable", os.path.expanduser("~"))
+            if file_path:
+                browser_path_input.setText(file_path)
+
+        def browse_output():
+            folder = QFileDialog.getExistingDirectory(dialog, "Select Reports Folder", output_folder_input.text())
+            if folder:
+                output_folder_input.setText(folder)
+
+        def test_browser():
+            candidate = browser_path_input.text().strip()
+            if candidate and not os.path.exists(candidate):
+                browser_status_label.setText("Configured browser path does not exist")
+                return
+            old_env = os.environ.get("GTX_BROWSER_PATH")
+            try:
+                if candidate:
+                    os.environ["GTX_BROWSER_PATH"] = candidate
+                else:
+                    os.environ.pop("GTX_BROWSER_PATH", None)
+                options = get_browser_launch_options()
+                browser_status_label.setText(f"Launch mode ready: {options.get('executable_path') or options.get('channel')}")
+            finally:
+                if old_env is None:
+                    os.environ.pop("GTX_BROWSER_PATH", None)
+                else:
+                    os.environ["GTX_BROWSER_PATH"] = old_env
+
+        browser_browse_btn.clicked.connect(browse_browser)
+        output_browse_btn.clicked.connect(browse_output)
+        test_browser_btn.clicked.connect(test_browser)
+
+        layout.addWidget(browser_group)
+        layout.addWidget(output_group)
+        layout.addWidget(rules_group, 1)
+        layout.addWidget(defaults_group)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        save_btn = QPushButton("Save Settings")
+        save_btn.setObjectName("primaryButton")
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("secondaryButton")
+        buttons.addWidget(save_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+
+        def collect_rules():
+            collected = []
+            for row in range(rules_table.rowCount()):
+                template_item = rules_table.item(row, 0)
+                bic_item = rules_table.item(row, 1)
+                flow_item = rules_table.item(row, 2)
+                template = template_item.text().strip() if template_item else ""
+                if not template:
+                    continue
+                collected.append({
+                    "template": template,
+                    "to_bic": bic_item.text().strip() if bic_item else "",
+                    "flow": flow_item.text().strip() if flow_item else "",
+                })
+            return collected
+
+        def save_dialog_settings():
+            self.app_settings = save_settings({
+                "browser_path": browser_path_input.text().strip(),
+                "output_folder": output_folder_input.text().strip(),
+                "funding_reference": funding_reference_input.text().strip(),
+                "stop_approval_on_first_failure": stop_on_failure_checkbox.isChecked(),
+                "approval_rules": collect_rules(),
+            })
+            self._apply_runtime_settings()
+            self._refresh_reports()
+            self.statusBar.showMessage("Settings saved")
+            dialog.accept()
+
+        save_btn.clicked.connect(save_dialog_settings)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec()
     
     def _process_data(self, df):
         # Clear existing data
@@ -2369,7 +2635,9 @@ class SimplePaymentApp(QMainWindow):
                 
                 # Get OTR number
                 otr = str(row[otr_col]).strip() if not pd.isna(row[otr_col]) else ""
-                reference = str(row[reference_col]).strip() if reference_col and not pd.isna(row[reference_col]) else "CO5590"
+                reference = self._default_funding_reference()
+                if reference_col and not pd.isna(row[reference_col]):
+                    reference = str(row[reference_col]).strip() or self._default_funding_reference()
                 
                 template = resolved_template.template
                 unit = resolved_template.unit
@@ -2459,6 +2727,8 @@ class SimplePaymentApp(QMainWindow):
             self.approval_file_path_input.clear()
         if hasattr(self, "approval_results_table"):
             self.approval_results_table.setRowCount(0)
+        if hasattr(self, "report_log_table"):
+            self.report_log_table.setRowCount(0)
         self._clear_payment_copies()
         self.table_widget.setRowCount(0)
         self.payments_data = []
@@ -2487,6 +2757,7 @@ class SimplePaymentApp(QMainWindow):
         
         # Update value dates from the table before starting automation
         self._update_value_dates_from_table()
+        self._apply_runtime_settings()
         self.last_error_message = ""
         self.copy_error_btn.setEnabled(False)
             
@@ -2545,6 +2816,7 @@ class SimplePaymentApp(QMainWindow):
             return
 
         self._update_value_dates_from_table()
+        self._apply_runtime_settings()
         self._populate_approval_pending_results(approval_references)
         self._clear_payment_copies()
         self.last_error_message = ""
@@ -2604,6 +2876,7 @@ class SimplePaymentApp(QMainWindow):
             return
 
         self._update_value_dates_from_table()
+        self._apply_runtime_settings()
         self._populate_approval_pending_results(approval_references)
         self._clear_payment_copies()
         self.last_error_message = ""
@@ -2730,6 +3003,7 @@ class SimplePaymentApp(QMainWindow):
                 status_item = self.approval_results_table.item(row, 4)
                 status = status_item.text().strip() if status_item else ""
                 self._apply_approval_result_style(row, status)
+            self._refresh_selected_approval_checks()
 
     def _update_payment_status(self, row_num, status):
         """Update the status of a specific payment in the table."""
@@ -2824,6 +3098,7 @@ class SimplePaymentApp(QMainWindow):
             self.view_payment_copies_btn.setEnabled(False)
         if hasattr(self, "export_audit_pdf_btn"):
             self.export_audit_pdf_btn.setEnabled(False)
+        self._refresh_reports()
 
     def _populate_payment_copies(self, results):
         self.last_approval_results = list(results or [])
@@ -2862,6 +3137,78 @@ class SimplePaymentApp(QMainWindow):
             self.view_payment_copies_btn.setEnabled(has_payment_copies)
         if hasattr(self, "export_audit_pdf_btn"):
             self.export_audit_pdf_btn.setEnabled(self._has_matched_approval_results())
+        self._refresh_reports()
+
+    def _output_folder(self):
+        folder = str(self.app_settings.get("output_folder") or "").strip()
+        if folder:
+            return folder
+        fallback = os.path.join(os.path.expanduser("~"), "Downloads")
+        return fallback if os.path.isdir(fallback) else os.path.expanduser("~")
+
+    def _open_output_folder(self):
+        folder = self._output_folder()
+        if not os.path.isdir(folder):
+            self.statusBar.showMessage(f"Output folder does not exist: {folder}")
+            return
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(folder)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", folder])
+            else:
+                subprocess.Popen(["xdg-open", folder])
+        except Exception as exc:
+            self.statusBar.showMessage(f"Could not open output folder: {exc}")
+
+    def _append_run_log(self, result, current_check=None):
+        if not hasattr(self, "report_log_table"):
+            return
+        reference = str(result.get("reference") or "")
+        status = str(result.get("status") or "")
+        event = str(current_check or result.get("current_check") or self._approval_current_check(result))
+        if not reference and not status:
+            return
+        row = self.report_log_table.rowCount()
+        self.report_log_table.insertRow(row)
+        values = [datetime.now().strftime("%H:%M:%S"), reference, event, status]
+        for col, value in enumerate(values):
+            self.report_log_table.setItem(row, col, QTableWidgetItem(value))
+
+    def _refresh_reports(self):
+        if hasattr(self, "report_output_folder"):
+            self.report_output_folder.setText(self._output_folder())
+        if hasattr(self, "report_pdf_label"):
+            pdf_name = os.path.basename(self.last_report_pdf_path) if self.last_report_pdf_path else "not created yet"
+            self.report_pdf_label.setText(f"Latest PDF: {pdf_name}")
+        if hasattr(self, "report_payment_preview"):
+            self.report_payment_preview.setPlainText(self._payment_copies_text().strip())
+        if hasattr(self, "report_last_run_label") and self.last_approval_results:
+            self.report_last_run_label.setText(f"Last run: {datetime.now().strftime('%d-%b-%Y %H:%M')}")
+        if not hasattr(self, "report_summary_labels"):
+            return
+
+        counts = {"approved": 0, "skipped": 0, "review": 0, "errors": 0}
+        for result in self.last_approval_results:
+            status = str(result.get("status") or "")
+            if status == "Approved":
+                counts["approved"] += 1
+            elif status == "Skipped - already processed":
+                counts["skipped"] += 1
+            elif status == "Needs manual review":
+                counts["review"] += 1
+            elif status in {"Failed before approval", "Failed after verify click before OK", "Status unknown", "Search/read failed"}:
+                counts["errors"] += 1
+        labels = {
+            "approved": f"Approved: {counts['approved']}",
+            "skipped": f"Skipped: {counts['skipped']}",
+            "review": f"Needs Review: {counts['review']}",
+            "errors": f"Errors: {counts['errors']}",
+        }
+        for key, text in labels.items():
+            label = self.report_summary_labels.get(key)
+            if label:
+                label.setText(text)
 
     def _has_matched_approval_results(self):
         return any(is_reportable_payment_copy_result(result) for result in self.last_approval_results)
@@ -2931,7 +3278,7 @@ class SimplePaymentApp(QMainWindow):
             return
 
         default_name = format_approved_payments_pdf_name(datetime.now())
-        default_path = os.path.join(os.path.expanduser("~"), "Downloads", default_name)
+        default_path = os.path.join(self._output_folder(), default_name)
         if not os.path.isdir(os.path.dirname(default_path)):
             default_path = os.path.join(os.path.expanduser("~"), default_name)
 
@@ -2978,6 +3325,8 @@ class SimplePaymentApp(QMainWindow):
             self._show_error_details(error_message)
             return
 
+        self.last_report_pdf_path = file_path
+        self._refresh_reports()
         self.statusBar.showMessage(f"Matched payment copies PDF exported: {file_path}")
 
     def _auto_export_approval_run_pdf(self, results):
@@ -2987,10 +3336,10 @@ class SimplePaymentApp(QMainWindow):
         if not reportable_results:
             return ""
 
-        downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-        if not os.path.isdir(downloads_dir):
-            downloads_dir = os.path.expanduser("~")
-        file_path = os.path.join(downloads_dir, format_approved_payments_pdf_name(datetime.now()))
+        output_dir = self._output_folder()
+        if not os.path.isdir(output_dir):
+            output_dir = os.path.expanduser("~")
+        file_path = os.path.join(output_dir, format_approved_payments_pdf_name(datetime.now()))
 
         excel_file = ""
         if hasattr(self, "approval_file_path_input"):
@@ -3004,6 +3353,8 @@ class SimplePaymentApp(QMainWindow):
             run_date=datetime.now().strftime("%d-%b-%Y %H:%M"),
         )
         render_html_pdf_with_playwright(report_html, file_path, sync_playwright)
+        self.last_report_pdf_path = file_path
+        self._refresh_reports()
         return file_path
         
     def _handle_finished(self, result):
@@ -3076,6 +3427,7 @@ class SimplePaymentApp(QMainWindow):
             "expected_amount": f"{payment.get('amount', 0):,.2f}",
             "expected_date": payment.get("value_date", ""),
             "status": status,
+            "current_check": self._approval_current_check({"status": status, "details": details}),
             "details": details,
         }
 
@@ -3103,6 +3455,7 @@ class SimplePaymentApp(QMainWindow):
                     payment,
                     details="Paste approval references, then run approval",
                 ),
+                log=False,
             )
 
     def _populate_approval_pending_results(self, approval_references):
@@ -3123,15 +3476,17 @@ class SimplePaymentApp(QMainWindow):
                     "expected_amount": "",
                     "expected_date": "",
                     "status": "Pending",
+                    "current_check": "Waiting",
                     "details": "Waiting for audit; no matching Excel row found yet",
                 }
             row = self.approval_results_table.rowCount()
             self.approval_results_table.insertRow(row)
-            self._set_approval_result_row(row, result)
+            self._set_approval_result_row(row, result, log=False)
 
-    def _set_approval_result_row(self, row, result):
+    def _set_approval_result_row(self, row, result, log=True):
         full_details = str(result.get("details", ""))
         display_status = str(result.get("status", ""))
+        current_check = result.get("current_check") or self._approval_current_check(result)
         display_details = self._summarize_approval_details(full_details)
         values = [
             result.get("template", ""),
@@ -3139,17 +3494,151 @@ class SimplePaymentApp(QMainWindow):
             result.get("expected_amount", ""),
             result.get("expected_date", ""),
             display_status,
+            current_check,
             display_details,
         ]
         for col, value in enumerate(values):
             item = QTableWidgetItem(str(value))
-            if col == 5:
+            if col == 6:
                 item.setData(Qt.ItemDataRole.UserRole, full_details)
                 item.setToolTip(full_details)
             elif full_details:
                 item.setToolTip(full_details)
-            self.approval_results_table.setItem(row, col, item)
+        self.approval_results_table.setItem(row, col, item)
         self._apply_approval_result_style(row, result.get("status", ""))
+        if log:
+            self._append_run_log(result, current_check)
+        self._refresh_reports()
+
+    def _approval_current_check(self, result):
+        status = str(result.get("status") or "")
+        details = str(result.get("details") or "")
+        if status == "Verify details matched":
+            return "Details matched Excel"
+        if status == "Confirmation values checked":
+            return "Amount / CCY / Date read back"
+        if status == "Approved":
+            return "Final search copy matched" if result.get("payment_copy_html") else "OK clicked"
+        if status == "Skipped - already processed":
+            return "Already processed"
+        if status in {"Needs manual review", "Failed before approval", "Search/read failed"}:
+            return "Stopped before approval"
+        if status == "Failed after verify click before OK":
+            return "Stopped before OK"
+        if status == "Status unknown":
+            return "Check status manually"
+        if "Waiting" in details or status == "Pending":
+            return "Waiting"
+        return status or "Waiting"
+
+    def _approval_gate_states(self, status, current_check):
+        gates = {
+            "verify_found": "pending",
+            "details_matched": "pending",
+            "verify_clicked": "pending",
+            "confirmation_checked": "pending",
+            "ok_clicked": "pending",
+            "final_copy_matched": "pending",
+        }
+        status = str(status or "")
+        current_check = str(current_check or "")
+
+        if status in {"Needs manual review", "Failed before approval", "Search/read failed"}:
+            gates["verify_found"] = "failed"
+            return gates
+        if status == "Failed after verify click before OK":
+            for key in ("verify_found", "details_matched", "verify_clicked"):
+                gates[key] = "done"
+            gates["confirmation_checked"] = "failed"
+            return gates
+        if status == "Status unknown":
+            for key in ("verify_found", "details_matched", "verify_clicked", "confirmation_checked"):
+                gates[key] = "done"
+            gates["ok_clicked"] = "failed"
+            return gates
+        if status == "Skipped - already processed":
+            for key in gates:
+                gates[key] = "done"
+            return gates
+        if status == "Verify details matched":
+            gates["verify_found"] = "done"
+            gates["details_matched"] = "done"
+            gates["verify_clicked"] = "active"
+            return gates
+        if status == "Confirmation values checked":
+            for key in ("verify_found", "details_matched", "verify_clicked", "confirmation_checked"):
+                gates[key] = "done"
+            gates["ok_clicked"] = "active"
+            return gates
+        if status == "Approved":
+            for key in ("verify_found", "details_matched", "verify_clicked", "confirmation_checked", "ok_clicked"):
+                gates[key] = "done"
+            gates["final_copy_matched"] = "done" if current_check == "Final search copy matched" else "active"
+            return gates
+        return gates
+
+    def _set_approval_gate_label(self, key, state):
+        if not hasattr(self, "approval_check_labels"):
+            return
+        label = self.approval_check_labels.get(key)
+        if not label:
+            return
+        base_text = {
+            "verify_found": "Verify page found",
+            "details_matched": "Details matched Excel",
+            "verify_clicked": "Verify clicked",
+            "confirmation_checked": "Amount / CCY / Date read back",
+            "ok_clicked": "OK clicked",
+            "final_copy_matched": "Final search copy matched",
+        }[key]
+        prefix = {
+            "done": "Done",
+            "active": "Active",
+            "failed": "Review",
+            "pending": "Pending",
+        }.get(state, "Pending")
+        label.setObjectName(f"approvalGate{prefix}")
+        label.setText(f"{prefix} - {base_text}")
+        self._style_approval_gate_label(label, state)
+
+    def _style_approval_gate_label(self, label, state):
+        colors = {
+            "done": ("#e3f8e9", "#125330", "#b7e4c7") if not self.dark_mode else ("#163d2b", "#bdf2cf", "#245a3e"),
+            "active": ("#e7f3ff", "#185a8d", "#b9dcf7") if not self.dark_mode else ("#1e3a4f", "#bfe4ff", "#2d5e7e"),
+            "failed": ("#ffe7e7", "#7e1e1e", "#ffc9c9") if not self.dark_mode else ("#4a2428", "#ffc6c6", "#693238"),
+            "pending": ("#eef2f6", "#52606d", "#d9e2ec") if not self.dark_mode else ("#303743", "#d5dde8", "#444d5a"),
+        }
+        bg, fg, border = colors.get(state, colors["pending"])
+        label.setStyleSheet(
+            f"background-color: {bg}; color: {fg}; border: 1px solid {border}; "
+            "border-radius: 5px; padding: 5px 8px; font-weight: 600;"
+        )
+
+    def _refresh_selected_approval_checks(self):
+        if not hasattr(self, "approval_results_table") or not hasattr(self, "approval_check_reference"):
+            return
+        table = self.approval_results_table
+        selected_rows = sorted({index.row() for index in table.selectedIndexes()})
+        row = selected_rows[0] if selected_rows else (0 if table.rowCount() else None)
+        if row is None:
+            self.approval_check_reference.setText("No approval reference selected")
+            self.approval_check_expected.setText("Expected: amount/date/currency pending")
+            for key in self.approval_check_labels:
+                self._set_approval_gate_label(key, "pending")
+            return
+
+        template = self._approval_cell_copy_text(row, 0)
+        reference = self._approval_cell_copy_text(row, 1) or "Reference pending"
+        amount = self._approval_cell_copy_text(row, 2)
+        value_date = self._approval_cell_copy_text(row, 3)
+        status = self._approval_cell_copy_text(row, 4)
+        current_check = self._approval_cell_copy_text(row, 5)
+        self.approval_check_reference.setText(f"{template} | {reference}")
+        self.approval_check_expected.setText(
+            f"Expected: {amount or 'amount pending'} | {value_date or 'date pending'} | {current_check}"
+        )
+        for key, state in self._approval_gate_states(status, current_check).items():
+            self._set_approval_gate_label(key, state)
 
     def _summarize_approval_details(self, details):
         text = str(details or "").strip()
@@ -3218,6 +3707,8 @@ class SimplePaymentApp(QMainWindow):
             row = self.approval_results_table.rowCount()
             self.approval_results_table.insertRow(row)
         self._set_approval_result_row(row, result)
+        self.approval_results_table.selectRow(row)
+        self._refresh_selected_approval_checks()
         QApplication.processEvents()
 
     def _copy_approval_results_selection(self):
@@ -3257,12 +3748,12 @@ class SimplePaymentApp(QMainWindow):
         item = self.approval_results_table.item(row, col)
         if not item:
             return ""
-        if col == 5:
+        if col == 6:
             return item.data(Qt.ItemDataRole.UserRole) or item.text()
         return item.text()
 
     def _approval_result_full_text_from_row(self, row):
-        labels = ["Template", "GTX Reference", "Expected Amount", "Value Date", "Result", "Details"]
+        labels = ["Template", "GTX Reference", "Expected Amount", "Value Date", "Result", "Current Check", "Details"]
         lines = []
         for col, label in enumerate(labels):
             lines.append(f"{label}: {self._approval_cell_copy_text(row, col)}")
@@ -4039,7 +4530,7 @@ class InstructionsDialog(QDialog):
     def __init__(self, parent=None, dark_mode=False):
         super().__init__(parent)
         self.dark_mode = dark_mode
-        self.setWindowTitle("GTExchange Payment Automation - Guide")
+        self.setWindowTitle("AP Funding Payment Automation - Guide")
         self.setMinimumSize(500, 500)  # Larger size for better readability
         
         # Use a layout to organize the content
@@ -4052,7 +4543,7 @@ class InstructionsDialog(QDialog):
             self.setStyleSheet("QDialog { background-color: #2D2D30; color: #E1E1E1; }")
         
         # Create a title with styling
-        title_label = QLabel("GTExchange Payment Automation")
+        title_label = QLabel("AP Funding Payment Automation")
         title_color = "#007ACC" if self.dark_mode else "#0066cc"
         title_label.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {title_color};")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
