@@ -3536,6 +3536,7 @@ class SimplePaymentApp(QMainWindow):
                 ),
                 log=False,
             )
+        self._select_first_approval_result()
 
     def _populate_approval_pending_results(self, approval_references):
         self.approval_results_table.setRowCount(0)
@@ -3561,6 +3562,12 @@ class SimplePaymentApp(QMainWindow):
             row = self.approval_results_table.rowCount()
             self.approval_results_table.insertRow(row)
             self._set_approval_result_row(row, result, log=False)
+        self._select_first_approval_result()
+
+    def _select_first_approval_result(self):
+        if self.approval_results_table.rowCount() > 0:
+            self.approval_results_table.selectRow(0)
+        self._refresh_selected_approval_checks()
 
     def _set_approval_result_row(self, row, result, log=True):
         full_details = str(result.get("details", ""))
@@ -3583,7 +3590,7 @@ class SimplePaymentApp(QMainWindow):
                 item.setToolTip(full_details)
             elif full_details:
                 item.setToolTip(full_details)
-        self.approval_results_table.setItem(row, col, item)
+            self.approval_results_table.setItem(row, col, item)
         self._apply_approval_result_style(row, result.get("status", ""))
         if log:
             self._append_run_log(result, current_check)
