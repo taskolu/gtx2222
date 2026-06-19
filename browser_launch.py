@@ -13,20 +13,26 @@ def dismiss_verify_no_search_warning(
     timeout_ms=VERIFY_WARNING_OK_TIMEOUT_MS,
     on_progress=None,
 ):
-    warning = page.get_by_text("No search item found").first
+    warnings = page.get_by_text("No search item found")
+    warning = None
     try:
-        if not warning.is_visible(timeout=100):
-            return False
-        if "no search item found" not in warning.inner_text(timeout=500).lower():
-            return False
+        for index in range(warnings.count()):
+            candidate = warnings.nth(index)
+            if not candidate.is_visible(timeout=100):
+                continue
+            if "no search item found" in candidate.inner_text(timeout=500).lower():
+                warning = candidate
+                break
     except Exception:
+        return False
+    if warning is None:
         return False
 
     if on_progress:
         on_progress("Verify search returned no item; closing warning popup")
 
     ok_locators = (
-        page.get_by_role("cell", name="OK", exact=True),
+        page.get_by_role("cell", name="OK", exact=False),
         page.get_by_role("button", name="OK", exact=True),
         page.locator('input[value="OK"]:visible, button:visible:has-text("OK")'),
     )

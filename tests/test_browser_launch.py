@@ -24,6 +24,12 @@ class BrowserLaunchTests(unittest.TestCase):
             def inner_text(self, timeout):
                 return "No search item found"
 
+            def count(self):
+                return 1
+
+            def nth(self, index):
+                return self
+
         class EmptyButtons:
             def count(self):
                 return 0
@@ -60,6 +66,12 @@ class BrowserLaunchTests(unittest.TestCase):
 
             def wait_for(self, state, timeout):
                 self.hidden_waited = state == "hidden"
+
+            def count(self):
+                return 1
+
+            def nth(self, index):
+                return self
 
         class FakeButton:
             def __init__(self):
@@ -120,6 +132,12 @@ class BrowserLaunchTests(unittest.TestCase):
             def wait_for(self, state, timeout):
                 self.hidden_waited = state == "hidden"
 
+            def count(self):
+                return 1
+
+            def nth(self, index):
+                return self
+
         class FakeCell:
             def __init__(self):
                 self.clicked = False
@@ -166,6 +184,70 @@ class BrowserLaunchTests(unittest.TestCase):
         self.assertTrue(dismissed)
         self.assertTrue(ok_cell.clicked)
         self.assertTrue(warning.hidden_waited)
+
+    def test_verify_warning_ignores_hidden_duplicate_text(self):
+        class FakeWarning:
+            def __init__(self, visible):
+                self.visible = visible
+                self.hidden_waited = False
+
+            def is_visible(self, timeout):
+                return self.visible
+
+            def inner_text(self, timeout):
+                return "No search item found"
+
+            def wait_for(self, state, timeout):
+                self.hidden_waited = state == "hidden"
+
+        class FakeControl:
+            def __init__(self):
+                self.clicked = False
+
+            def is_visible(self, timeout):
+                return True
+
+            def click(self, timeout):
+                self.clicked = True
+
+        class LocatorList:
+            def __init__(self, items=()):
+                self.items = items
+                self.first = items[0] if items else self
+
+            def count(self):
+                return len(self.items)
+
+            def nth(self, index):
+                return self.items[index]
+
+        hidden_warning = FakeWarning(False)
+        visible_warning = FakeWarning(True)
+        ok_cell = FakeControl()
+
+        class FakePage:
+            def get_by_text(self, text):
+                return LocatorList((hidden_warning, visible_warning))
+
+            def get_by_role(self, role, name, exact):
+                if role == "cell" and name == "OK":
+                    return LocatorList((ok_cell,))
+                return LocatorList()
+
+            def locator(self, selector):
+                return LocatorList()
+
+            def wait_for_timeout(self, milliseconds):
+                pass
+
+        dismissed = browser_launch.dismiss_verify_no_search_warning(
+            FakePage(),
+            timeout_ms=0,
+        )
+
+        self.assertTrue(dismissed)
+        self.assertTrue(ok_cell.clicked)
+        self.assertTrue(visible_warning.hidden_waited)
 
     def test_bundled_edge_cdp_args_disable_renderer_code_integrity(self):
         args = browser_launch.build_edge_cdp_args(
