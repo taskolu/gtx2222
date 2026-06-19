@@ -4,6 +4,52 @@ import time
 import urllib.request
 
 
+def dismiss_verify_no_search_warning(page, timeout_ms=2000, on_progress=None):
+    warning = page.get_by_text("No search item found").first
+    try:
+        if not warning.is_visible(timeout=100):
+            return False
+        if "no search item found" not in warning.inner_text(timeout=500).lower():
+            return False
+    except Exception:
+        return False
+
+    if on_progress:
+        on_progress("Verify search returned no item; closing warning popup")
+
+    button_locators = (
+        page.get_by_role("button", name="OK", exact=True),
+        page.locator('input[value="OK"]:visible, button:visible:has-text("OK")'),
+    )
+    deadline = time.monotonic() + (timeout_ms / 1000)
+    while True:
+        for buttons in button_locators:
+            try:
+                count = buttons.count()
+            except Exception:
+                continue
+            for index in range(count):
+                button = buttons.nth(index)
+                try:
+                    if not button.is_visible(timeout=50):
+                        continue
+                    button.click(timeout=3000)
+                    warning.wait_for(state="hidden", timeout=3000)
+                    return True
+                except Exception as exc:
+                    raise RuntimeError(
+                        "Verify warning popup OK was clicked but the popup did not close"
+                    ) from exc
+
+        if time.monotonic() >= deadline:
+            break
+        page.wait_for_timeout(100)
+
+    raise RuntimeError(
+        "Verify warning popup is visible but its OK button is not available"
+    )
+
+
 def wait_for_cdp_endpoint(endpoint, process=None, timeout=20, urlopen=urllib.request.urlopen, sleep=time.sleep):
     deadline = time.time() + timeout
     version_url = f"{endpoint}/json/version"

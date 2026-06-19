@@ -39,7 +39,6 @@ from approval_audit import (
     format_payment_copy,
     is_reportable_payment_copy_result,
     is_successful_approval_result_status,
-    is_verify_no_search_item_warning,
     normalize_amount,
     normalize_date,
     parse_reference_lines,
@@ -51,7 +50,12 @@ from payment_mapping import (
     is_valid_payment_code,
     resolve_payment_template,
 )
-from browser_launch import build_edge_cdp_args, get_browser_launch_options, wait_for_cdp_endpoint
+from browser_launch import (
+    build_edge_cdp_args,
+    dismiss_verify_no_search_warning,
+    get_browser_launch_options,
+    wait_for_cdp_endpoint,
+)
 from pdf_export import render_html_pdf_with_playwright
 
 
@@ -1513,23 +1517,10 @@ class ApprovalRunWorker(ApprovalAuditWorker):
         self.signals.progress.emit("Verify page ready")
 
     def _dismiss_verify_no_search_warning(self, page):
-        try:
-            warning_text = page.get_by_text("No search item found").first
-            if not warning_text.is_visible(timeout=100):
-                return False
-            text = warning_text.inner_text(timeout=500)
-            if not is_verify_no_search_item_warning(text):
-                return False
-
-            self.signals.progress.emit("Verify search returned no item; closing warning popup")
-            try:
-                page.get_by_role("button", name="OK").click(timeout=5000)
-            except Exception:
-                page.locator('input[value="OK"], button:has-text("OK")').first.click(timeout=5000)
-            page.wait_for_timeout(100)
-            return True
-        except Exception:
-            return False
+        return dismiss_verify_no_search_warning(
+            page,
+            on_progress=self.signals.progress.emit,
+        )
 
     def _wait_for_verify_search_result(self, page, gtx_reference):
         reference_link = page.get_by_role("link", name=gtx_reference)

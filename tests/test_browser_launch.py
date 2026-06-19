@@ -5,6 +5,98 @@ import browser_launch
 
 
 class BrowserLaunchTests(unittest.TestCase):
+    def test_verify_warning_requires_a_visible_ok_button(self):
+        class FakeWarning:
+            first = None
+
+            def __init__(self):
+                self.first = self
+
+            def is_visible(self, timeout):
+                return True
+
+            def inner_text(self, timeout):
+                return "No search item found"
+
+        class EmptyButtons:
+            def count(self):
+                return 0
+
+        class FakePage:
+            def get_by_text(self, text):
+                return FakeWarning()
+
+            def get_by_role(self, role, name, exact):
+                return EmptyButtons()
+
+            def locator(self, selector):
+                return EmptyButtons()
+
+            def wait_for_timeout(self, milliseconds):
+                pass
+
+        with self.assertRaisesRegex(RuntimeError, "OK button is not available"):
+            browser_launch.dismiss_verify_no_search_warning(FakePage(), timeout_ms=0)
+
+    def test_verify_warning_clicks_visible_ok_and_confirms_it_closed(self):
+        class FakeWarning:
+            first = None
+
+            def __init__(self):
+                self.first = self
+                self.hidden_waited = False
+
+            def is_visible(self, timeout):
+                return True
+
+            def inner_text(self, timeout):
+                return "No search item found"
+
+            def wait_for(self, state, timeout):
+                self.hidden_waited = state == "hidden"
+
+        class FakeButton:
+            def __init__(self):
+                self.clicked = False
+
+            def is_visible(self, timeout):
+                return True
+
+            def click(self, timeout):
+                self.clicked = True
+
+        class ButtonList:
+            def __init__(self, button):
+                self.button = button
+
+            def count(self):
+                return 1
+
+            def nth(self, index):
+                return self.button
+
+        warning = FakeWarning()
+        button = FakeButton()
+
+        class FakePage:
+            def get_by_text(self, text):
+                return warning
+
+            def get_by_role(self, role, name, exact):
+                return ButtonList(button)
+
+            def locator(self, selector):
+                return ButtonList(button)
+
+            def wait_for_timeout(self, milliseconds):
+                pass
+
+        dismissed = browser_launch.dismiss_verify_no_search_warning(FakePage())
+
+        self.assertTrue(dismissed)
+        self.assertTrue(button.clicked)
+        self.assertTrue(warning.hidden_waited)
+
     def test_bundled_edge_cdp_args_disable_renderer_code_integrity(self):
         args = browser_launch.build_edge_cdp_args(
             "msedge.exe",
