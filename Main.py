@@ -1872,7 +1872,7 @@ class SimplePaymentApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(self.BASE_WINDOW_TITLE)
-        self.setGeometry(100, 100, 1220, 840)
+        self.setGeometry(100, 100, 1080, 740)
         
         # Set application icon
         icon_found = False
@@ -1917,12 +1917,13 @@ class SimplePaymentApp(QMainWindow):
     def _position_window_right(self):
         """Position the window on the right side of the screen"""
         screen = QApplication.primaryScreen().availableGeometry()
-        window_width = self.width()
-        window_height = self.height()
+        window_width = min(self.width(), max(900, screen.width() - 32))
+        window_height = min(self.height(), max(640, screen.height() - 40))
+        self.resize(window_width, window_height)
         
         # Position on right side with a small margin
-        x_position = screen.width() - window_width - 20
-        y_position = (screen.height() - window_height) // 2
+        x_position = screen.x() + screen.width() - window_width - 16
+        y_position = screen.y() + max(12, (screen.height() - window_height) // 2)
         
         self.setGeometry(x_position, y_position, window_width, window_height)
     
@@ -1932,8 +1933,8 @@ class SimplePaymentApp(QMainWindow):
         main_widget.setObjectName("appRoot")
         self.setCentralWidget(main_widget)
         main_layout = QVBoxLayout(main_widget)
-        main_layout.setContentsMargins(18, 16, 18, 12)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(14, 12, 14, 10)
+        main_layout.setSpacing(9)
 
         header_frame = QFrame()
         header_frame.setObjectName("headerFrame")
@@ -1995,6 +1996,7 @@ class SimplePaymentApp(QMainWindow):
         setup_layout.setSpacing(12)
 
         login_group = QGroupBox("Login Details")
+        login_group.setMaximumWidth(330)
         login_layout = QVBoxLayout(login_group)
         login_layout.setContentsMargins(14, 18, 14, 14)
         login_layout.setSpacing(9)
@@ -2099,7 +2101,16 @@ class SimplePaymentApp(QMainWindow):
         self.table_widget.setHorizontalHeaderLabels([
             "Amount", "Template", "OTR Number", "Unit", "Status", "Reference", "Value Date"
         ])
-        self.table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        payment_header = self.table_widget.horizontalHeader()
+        for col in (0, 1, 3, 4, 5, 6):
+            payment_header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
+        payment_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table_widget.setColumnWidth(0, 105)
+        self.table_widget.setColumnWidth(1, 125)
+        self.table_widget.setColumnWidth(3, 95)
+        self.table_widget.setColumnWidth(4, 95)
+        self.table_widget.setColumnWidth(5, 165)
+        self.table_widget.setColumnWidth(6, 95)
         self.table_widget.setAlternatingRowColors(True)
         self.table_widget.verticalHeader().setVisible(False)
         self.table_widget.setShowGrid(False)
@@ -2170,7 +2181,9 @@ class SimplePaymentApp(QMainWindow):
 
         self.approval_refs_input = QTextEdit()
         self.approval_refs_input.setPlaceholderText("APAUDPACS: E008260612AOCYOF\nAPCHFPACS: E008260612AOCYOI")
-        self.approval_refs_input.setMinimumHeight(110)
+        self.approval_refs_input.setMinimumHeight(96)
+        self.approval_refs_input.setMaximumHeight(145)
+        self.approval_refs_input.textChanged.connect(self._sync_approval_preview_with_references)
         refs_layout.addWidget(self.approval_refs_input)
 
         action_layout = QHBoxLayout()
@@ -2182,8 +2195,9 @@ class SimplePaymentApp(QMainWindow):
         action_layout.addWidget(self.approval_run_btn)
         refs_layout.addLayout(action_layout)
 
-        approval_top_layout.addWidget(refs_group, 3)
-        approval_top_layout.addWidget(self._build_approval_checks_group(), 2)
+        refs_group.setMaximumWidth(420)
+        approval_top_layout.addWidget(refs_group, 2)
+        approval_top_layout.addWidget(self._build_approval_checks_group(), 3)
 
         results_group = QGroupBox("Approval Results")
         results_layout = QVBoxLayout(results_group)
@@ -2228,7 +2242,7 @@ class SimplePaymentApp(QMainWindow):
         self.approval_results_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.approval_results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.approval_results_table.setWordWrap(False)
-        self.approval_results_table.setMinimumHeight(320)
+        self.approval_results_table.setMinimumHeight(240)
         self.approval_results_table.cellDoubleClicked.connect(self._show_approval_result_details)
         self.approval_select_all_shortcut = QShortcut(QKeySequence.StandardKey.SelectAll, self.approval_results_table)
         self.approval_select_all_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -2328,12 +2342,24 @@ class SimplePaymentApp(QMainWindow):
         layout.addLayout(summary_layout)
 
         preview_group = QGroupBox("Payment Copies Preview")
-        preview_layout = QVBoxLayout(preview_group)
+        preview_layout = QHBoxLayout(preview_group)
         preview_layout.setContentsMargins(14, 18, 14, 14)
+        preview_layout.setSpacing(10)
+        self.report_reference_table = QTableWidget()
+        self.report_reference_table.setColumnCount(1)
+        self.report_reference_table.setHorizontalHeaderLabels(["GTX Reference"])
+        self.report_reference_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.report_reference_table.verticalHeader().setVisible(False)
+        self.report_reference_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.report_reference_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.report_reference_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.report_reference_table.setMaximumWidth(230)
+        self.report_reference_table.itemSelectionChanged.connect(self._show_selected_report_copy)
         self.report_payment_preview = QTextEdit()
         self.report_payment_preview.setReadOnly(True)
         self.report_payment_preview.setPlaceholderText("Approved payment copies will appear here after an approval run.")
-        preview_layout.addWidget(self.report_payment_preview)
+        preview_layout.addWidget(self.report_reference_table, 0)
+        preview_layout.addWidget(self.report_payment_preview, 1)
         layout.addWidget(preview_group, 2)
 
         log_group = QGroupBox("Run Log")
@@ -2385,6 +2411,15 @@ class SimplePaymentApp(QMainWindow):
     def _default_funding_reference(self):
         return str(self.app_settings.get("funding_reference") or "CO5590").strip() or "CO5590"
 
+    def _configured_owning_unit(self, template, fallback_unit):
+        template_name = str(template or "").strip().upper()
+        for rule in self.app_settings.get("approval_rules") or []:
+            if str(rule.get("template") or "").strip().upper() == template_name:
+                configured_unit = str(rule.get("owning_unit") or "").strip().upper()
+                if configured_unit:
+                    return configured_unit
+        return fallback_unit
+
     def _apply_runtime_settings(self):
         browser_path = str(self.app_settings.get("browser_path") or "").strip()
         if browser_path:
@@ -2396,7 +2431,7 @@ class SimplePaymentApp(QMainWindow):
     def _show_settings_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Settings")
-        dialog.resize(720, 620)
+        dialog.resize(700, 560)
 
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -2432,8 +2467,8 @@ class SimplePaymentApp(QMainWindow):
         rules_layout = QVBoxLayout(rules_group)
         rules_layout.setContentsMargins(14, 18, 14, 14)
         rules_table = QTableWidget()
-        rules_table.setColumnCount(3)
-        rules_table.setHorizontalHeaderLabels(["Template", "Expected To BIC", "Flow"])
+        rules_table.setColumnCount(4)
+        rules_table.setHorizontalHeaderLabels(["Template", "Expected To BIC", "Flow", "Owning Unit"])
         rules_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         rules_table.verticalHeader().setVisible(False)
         rules_table.setAlternatingRowColors(True)
@@ -2443,6 +2478,7 @@ class SimplePaymentApp(QMainWindow):
             rules_table.setItem(row, 0, QTableWidgetItem(str(rule.get("template") or "")))
             rules_table.setItem(row, 1, QTableWidgetItem(str(rule.get("to_bic") or "")))
             rules_table.setItem(row, 2, QTableWidgetItem(str(rule.get("flow") or "")))
+            rules_table.setItem(row, 3, QTableWidgetItem(str(rule.get("owning_unit") or "")))
         rules_layout.addWidget(rules_table)
 
         defaults_group = QGroupBox("Defaults")
@@ -2510,6 +2546,7 @@ class SimplePaymentApp(QMainWindow):
                 template_item = rules_table.item(row, 0)
                 bic_item = rules_table.item(row, 1)
                 flow_item = rules_table.item(row, 2)
+                owning_unit_item = rules_table.item(row, 3)
                 template = template_item.text().strip() if template_item else ""
                 if not template:
                     continue
@@ -2517,6 +2554,7 @@ class SimplePaymentApp(QMainWindow):
                     "template": template,
                     "to_bic": bic_item.text().strip() if bic_item else "",
                     "flow": flow_item.text().strip() if flow_item else "",
+                    "owning_unit": owning_unit_item.text().strip() if owning_unit_item else "",
                 })
             return collected
 
@@ -2640,7 +2678,7 @@ class SimplePaymentApp(QMainWindow):
                     reference = str(row[reference_col]).strip() or self._default_funding_reference()
                 
                 template = resolved_template.template
-                unit = resolved_template.unit
+                unit = self._configured_owning_unit(template, resolved_template.unit)
                 
                 # Calculate the default value date for this template
                 value_date = self._get_default_value_date(template)
@@ -2690,7 +2728,7 @@ class SimplePaymentApp(QMainWindow):
             self.statusBar.showMessage("No valid payments found in file")
             self.header_status_label.setText("No valid payments")
             self.start_btn.setEnabled(False)
-        self._populate_approval_preview_from_payments()
+        self._sync_approval_preview_with_references()
         self._update_summary()
     
     def _get_default_value_date(self, template_name):
@@ -3181,8 +3219,26 @@ class SimplePaymentApp(QMainWindow):
         if hasattr(self, "report_pdf_label"):
             pdf_name = os.path.basename(self.last_report_pdf_path) if self.last_report_pdf_path else "not created yet"
             self.report_pdf_label.setText(f"Latest PDF: {pdf_name}")
-        if hasattr(self, "report_payment_preview"):
-            self.report_payment_preview.setPlainText(self._payment_copies_text().strip())
+        if hasattr(self, "report_reference_table"):
+            selected_reference = ""
+            selected_rows = self.report_reference_table.selectionModel().selectedRows()
+            if selected_rows:
+                selected_item = self.report_reference_table.item(selected_rows[0].row(), 0)
+                selected_reference = selected_item.text() if selected_item else ""
+            references = list(self.payment_copies_by_reference.keys())
+            self.report_reference_table.blockSignals(True)
+            self.report_reference_table.setRowCount(len(references))
+            selected_row = 0
+            for row, reference in enumerate(references):
+                self.report_reference_table.setItem(row, 0, QTableWidgetItem(reference))
+                if reference == selected_reference:
+                    selected_row = row
+            self.report_reference_table.blockSignals(False)
+            if references:
+                self.report_reference_table.selectRow(selected_row)
+                self._show_selected_report_copy()
+            elif hasattr(self, "report_payment_preview"):
+                self.report_payment_preview.clear()
         if hasattr(self, "report_last_run_label") and self.last_approval_results:
             self.report_last_run_label.setText(f"Last run: {datetime.now().strftime('%d-%b-%Y %H:%M')}")
         if not hasattr(self, "report_summary_labels"):
@@ -3209,6 +3265,17 @@ class SimplePaymentApp(QMainWindow):
             label = self.report_summary_labels.get(key)
             if label:
                 label.setText(text)
+
+    def _show_selected_report_copy(self):
+        if not hasattr(self, "report_reference_table") or not hasattr(self, "report_payment_preview"):
+            return
+        selected_rows = self.report_reference_table.selectionModel().selectedRows()
+        if not selected_rows:
+            self.report_payment_preview.clear()
+            return
+        item = self.report_reference_table.item(selected_rows[0].row(), 0)
+        reference = item.text().strip() if item else ""
+        self.report_payment_preview.setPlainText(self.payment_copies_by_reference.get(reference, ""))
 
     def _has_matched_approval_results(self):
         return any(is_reportable_payment_copy_result(result) for result in self.last_approval_results)
@@ -3420,7 +3487,7 @@ class SimplePaymentApp(QMainWindow):
             self.approval_results_table.insertRow(row)
             self._set_approval_result_row(row, result)
 
-    def _approval_result_from_payment(self, payment, reference="", status="Pending", details="Waiting for audit"):
+    def _approval_result_from_payment(self, payment, reference="", status="Pending", details="Waiting for approval"):
         return {
             "template": approval_template_name(payment),
             "reference": reference,
@@ -3440,6 +3507,18 @@ class SimplePaymentApp(QMainWindow):
                 used_rows.add(row_num)
                 return payment
         return None
+
+    def _sync_approval_preview_with_references(self):
+        if not hasattr(self, "approval_results_table"):
+            return
+        approval_references = parse_reference_lines(self.approval_refs_input.toPlainText())
+        if approval_references and self.payments_data:
+            self._populate_approval_pending_results(approval_references)
+        elif self.payments_data:
+            self._populate_approval_preview_from_payments()
+        else:
+            self.approval_results_table.setRowCount(0)
+            self._refresh_selected_approval_checks()
 
     def _populate_approval_preview_from_payments(self):
         if not hasattr(self, "approval_results_table"):
@@ -3467,7 +3546,7 @@ class SimplePaymentApp(QMainWindow):
                 result = self._approval_result_from_payment(
                     payment,
                     reference=approval_reference.reference,
-                    details="Waiting for audit",
+                    details="Waiting for approval",
                 )
             else:
                 result = {
@@ -3477,7 +3556,7 @@ class SimplePaymentApp(QMainWindow):
                     "expected_date": "",
                     "status": "Pending",
                     "current_check": "Waiting",
-                    "details": "Waiting for audit; no matching Excel row found yet",
+                    "details": "Waiting for approval; no matching Excel row found yet",
                 }
             row = self.approval_results_table.rowCount()
             self.approval_results_table.insertRow(row)
@@ -3646,7 +3725,7 @@ class SimplePaymentApp(QMainWindow):
             return ""
         if text.startswith("All checked fields match"):
             return text
-        if text in {"Waiting for audit", "Paste approval references, then run approval"}:
+        if text in {"Waiting for approval", "Paste approval references, then run approval"}:
             return text
         if text.startswith("Search/read failed"):
             return "Search/read failed"

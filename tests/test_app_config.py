@@ -19,6 +19,10 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(settings["output_folder"], os.path.join("/Users/example", "Downloads"))
         self.assertTrue(settings["stop_approval_on_first_failure"])
         self.assertTrue(any(rule["template"] == "APUSDPACS" for rule in settings["approval_rules"]))
+        usd_rule = next(rule for rule in settings["approval_rules"] if rule["template"] == "APUSDPACS")
+        aud_rule = next(rule for rule in settings["approval_rules"] if rule["template"] == "APAUDPACS")
+        self.assertEqual(usd_rule["owning_unit"], "CCT_CHUK")
+        self.assertEqual(aud_rule["owning_unit"], "TGBP")
 
     def test_normalize_settings_preserves_known_values_and_repairs_missing_values(self):
         settings = normalize_settings(
@@ -27,7 +31,12 @@ class AppConfigTests(unittest.TestCase):
                 "output_folder": "C:/Reports",
                 "funding_reference": "CO6000",
                 "stop_approval_on_first_failure": False,
-                "approval_rules": [{"template": "APUSDPACS", "to_bic": "CUSTOMBICXXX", "flow": "PACS"}],
+                "approval_rules": [{
+                    "template": "APUSDPACS",
+                    "to_bic": "CUSTOMBICXXX",
+                    "flow": "PACS",
+                    "owning_unit": "CUSTOM_UNIT",
+                }],
             },
             home_dir="/Users/example",
         )
@@ -37,12 +46,21 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(settings["funding_reference"], "CO6000")
         self.assertFalse(settings["stop_approval_on_first_failure"])
         self.assertEqual(settings["approval_rules"][0]["to_bic"], "CUSTOMBICXXX")
+        self.assertEqual(settings["approval_rules"][0]["owning_unit"], "CUSTOM_UNIT")
 
     def test_load_settings_returns_defaults_for_missing_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             settings = load_settings(os.path.join(temp_dir, "missing.json"), home_dir=temp_dir)
 
         self.assertEqual(settings["funding_reference"], DEFAULT_FUNDING_REFERENCE)
+
+    def test_existing_rule_without_owning_unit_inherits_template_default(self):
+        settings = normalize_settings({
+            "approval_rules": [{"template": "APAUDPACS", "to_bic": "NATAAU3302S", "flow": "PACS"}],
+        })
+
+        aud_rule = next(rule for rule in settings["approval_rules"] if rule["template"] == "APAUDPACS")
+        self.assertEqual(aud_rule["owning_unit"], "TGBP")
 
     def test_save_and_load_settings_round_trip(self):
         with tempfile.TemporaryDirectory() as temp_dir:

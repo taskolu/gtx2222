@@ -8,19 +8,19 @@ APP_CONFIG_DIR = ".ap_funding_payment_automation"
 APP_CONFIG_FILE = "settings.json"
 
 DEFAULT_APPROVAL_RULES = [
-    {"template": "APAUDPACS", "to_bic": "NATAAU3302S", "flow": "PACS"},
-    {"template": "APCHFPACS", "to_bic": "BOFACH2XXXX", "flow": "PACS"},
-    {"template": "EURPMTAP2PACS", "to_bic": "BBRUBEBB010", "flow": "PACS"},
-    {"template": "APHKDPACS", "to_bic": "BOFAHKHXXXX", "flow": "PACS"},
-    {"template": "APJPYPACS", "to_bic": "IRVTUS3NXXX", "flow": "PACS"},
-    {"template": "APGBPPACS", "to_bic": "BARCGB22XXX", "flow": "PACS"},
-    {"template": "APGBPPACS2", "to_bic": "BARCGB22XXX", "flow": "PACS"},
-    {"template": "APUSDPACS", "to_bic": "IRVTUS3NXXX", "flow": "PACS"},
-    {"template": "APCADPACS", "to_bic": "BOFMCAM2XXX", "flow": "PACS"},
-    {"template": "APNZDPACS", "to_bic": "BOFAAUSXXXX", "flow": "PACS"},
-    {"template": "APSGDPACS", "to_bic": "BOFASG2XXXX", "flow": "PACS"},
-    {"template": "APFUNDINGCZK", "to_bic": "CEKOCZPPXXX", "flow": "MT101"},
-    {"template": "APPLNPACS", "to_bic": "BARCGB22XXX", "flow": "PACS"},
+    {"template": "APAUDPACS", "to_bic": "NATAAU3302S", "flow": "PACS", "owning_unit": "TGBP"},
+    {"template": "APCHFPACS", "to_bic": "BOFACH2XXXX", "flow": "PACS", "owning_unit": "TGBP"},
+    {"template": "EURPMTAP2PACS", "to_bic": "BBRUBEBB010", "flow": "PACS", "owning_unit": "CCT_CHUK"},
+    {"template": "APHKDPACS", "to_bic": "BOFAHKHXXXX", "flow": "PACS", "owning_unit": "TGBP"},
+    {"template": "APJPYPACS", "to_bic": "IRVTUS3NXXX", "flow": "PACS", "owning_unit": "CCT_CHUK"},
+    {"template": "APGBPPACS", "to_bic": "BARCGB22XXX", "flow": "PACS", "owning_unit": "CCT_CHUK"},
+    {"template": "APGBPPACS2", "to_bic": "BARCGB22XXX", "flow": "PACS", "owning_unit": "CCT_CHUK"},
+    {"template": "APUSDPACS", "to_bic": "IRVTUS3NXXX", "flow": "PACS", "owning_unit": "CCT_CHUK"},
+    {"template": "APCADPACS", "to_bic": "BOFMCAM2XXX", "flow": "PACS", "owning_unit": "CCT_CHUK"},
+    {"template": "APNZDPACS", "to_bic": "BOFAAUSXXXX", "flow": "PACS", "owning_unit": "CCT_CHUK"},
+    {"template": "APSGDPACS", "to_bic": "BOFASG2XXXX", "flow": "PACS", "owning_unit": "CCT_CHUK"},
+    {"template": "APFUNDINGCZK", "to_bic": "CEKOCZPPXXX", "flow": "MT101", "owning_unit": "CCT_CHUK"},
+    {"template": "APPLNPACS", "to_bic": "BARCGB22XXX", "flow": "PACS", "owning_unit": "CCT_CHUK"},
 ]
 
 
@@ -55,10 +55,14 @@ def _normalized_approval_rules(value):
             template = str(raw_rule.get("template") or "").strip().upper()
             if not template:
                 continue
+            default_rule = defaults_by_template.get(template, {})
             rules.append({
                 "template": template,
                 "to_bic": str(raw_rule.get("to_bic") or "").strip().upper(),
                 "flow": str(raw_rule.get("flow") or "").strip().upper(),
+                "owning_unit": str(
+                    raw_rule.get("owning_unit") or default_rule.get("owning_unit") or ""
+                ).strip().upper(),
             })
             defaults_by_template.pop(template, None)
 
