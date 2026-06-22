@@ -5,6 +5,7 @@ from payment_mapping import (
     format_amount,
     get_pacs_amount_field_ids,
     is_valid_payment_code,
+    payment_value_date,
     resolve_payment_template,
 )
 
@@ -77,6 +78,13 @@ class PaymentMappingTests(unittest.TestCase):
         self.assertNotIn("\n", narrative)
         self.assertLessEqual(len(narrative), 140)
         self.assertIn("OTR6591649", narrative)
+
+    def test_duplicate_templates_keep_their_own_value_dates(self):
+        first = {"template": "APUSDPACS", "value_date": "23.06.2026"}
+        second = {"template": "APUSDPACS", "value_date": "24.06.2026"}
+
+        self.assertEqual(payment_value_date(first), "23.06.2026")
+        self.assertEqual(payment_value_date(second), "24.06.2026")
 
 
 if __name__ == "__main__":

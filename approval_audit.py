@@ -1,5 +1,6 @@
 import html
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -89,6 +90,12 @@ class ApprovalPrecheckDecision:
     page_status: str = ""
 
 
+@dataclass(frozen=True)
+class FinalApprovalStatus:
+    outcome: str
+    page_status: str
+
+
 APPROVAL_ELIGIBLE_STATUS = "MESSAGE AWAITING VERIFICATION"
 APPROVAL_ALREADY_PROCESSED_STATUSES = {
     "MESSAGE ARCHIVED",
@@ -96,6 +103,8 @@ APPROVAL_ALREADY_PROCESSED_STATUSES = {
     "MESSAGE VERIFIED",
     "MESSAGE PROCESSED",
 }
+FINAL_APPROVAL_SUCCESS_STATUSES = set(APPROVAL_ALREADY_PROCESSED_STATUSES)
+FINAL_APPROVAL_REJECTED_STATUSES = {"MESSAGE REJECTED", "REJECTED"}
 REPORTABLE_PAYMENT_COPY_STATUSES = {
     "Match",
     "Approved",
@@ -111,6 +120,7 @@ SUCCESSFUL_APPROVAL_RESULT_STATUSES = {
 APPROVAL_STATUS_VALUES = [
     APPROVAL_ELIGIBLE_STATUS,
     *sorted(APPROVAL_ALREADY_PROCESSED_STATUSES),
+    *sorted(FINAL_APPROVAL_REJECTED_STATUSES),
 ]
 
 
@@ -149,10 +159,10 @@ def approval_confirmation_values(payment):
 
 def approval_page_status(details_text):
     normalized = re.sub(r"\s+", " ", str(details_text or "")).upper()
-    for status in APPROVAL_STATUS_VALUES:
-        if f"STATUS {status}" in normalized:
-            return status
-    return ""
+    known_statuses = sorted(APPROVAL_STATUS_VALUES, key=len, reverse=True)
+    status_pattern = "|".join(re.escape(status) for status in known_statuses)
+    match = re.search(rf"\bSTATUS\s+({status_pattern})\b", normalized)
+    return match.group(1) if match else ""
 
 
 def approval_status_is_eligible(status):
@@ -161,6 +171,36 @@ def approval_status_is_eligible(status):
 
 def approval_status_is_already_processed(status):
     return str(status or "").strip().upper() in APPROVAL_ALREADY_PROCESSED_STATUSES
+
+
+def classify_final_approval_status(details_text):
+    page_status = approval_page_status(details_text)
+    if page_status in FINAL_APPROVAL_SUCCESS_STATUSES:
+        return FinalApprovalStatus("approved", page_status)
+    if page_status in FINAL_APPROVAL_REJECTED_STATUSES:
+        return FinalApprovalStatus("rejected", page_status)
+    return FinalApprovalStatus("unknown", page_status)
+
+
+def wait_for_final_approval_status(
+    fetch_details,
+    wait,
+    timeout_seconds=30,
+    on_pending=None,
+    monotonic=time.monotonic,
+):
+    deadline = monotonic() + timeout_seconds
+    while True:
+        details = fetch_details()
+        details_text = details.get("text", "") if isinstance(details, dict) else details
+        decision = classify_final_approval_status(details_text)
+        if decision.outcome != "unknown" or monotonic() >= deadline:
+            return details, decision
+
+        if on_pending:
+            on_pending(decision)
+        remaining_ms = max(0, int((deadline - monotonic()) * 1000))
+        wait(min(3000, remaining_ms))
 
 
 def is_verify_no_search_item_warning(text):

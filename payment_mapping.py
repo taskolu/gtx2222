@@ -78,3 +78,7 @@ def build_narrative(reference, otr_number):
     base_text = f"Funding {str(reference or 'CO5590').strip()}"
     full_text = f"{base_text} {str(otr_number).strip()}" if otr_number else base_text
     return full_text[:140]
+
+
+def payment_value_date(payment):
+    return str((payment or {}).get("value_date") or "").strip()

@@ -1,7 +1,67 @@
 import os
+import shutil
 import sys
 import time
 import urllib.request
+
+
+VERIFICATION_DELAYS_MS = (500, 1000, 1500)
+
+
+def run_verified_action(action, verify, wait, description, delays=VERIFICATION_DELAYS_MS):
+    last_error = None
+    for delay_ms in delays:
+        try:
+            action()
+            wait(delay_ms)
+            if verify():
+                return True
+        except Exception as exc:
+            last_error = exc
+
+    message = f"{description} did not match after {len(delays)} attempts"
+    if last_error:
+        raise ValueError(f"{message}: {last_error}") from last_error
+    raise ValueError(message)
+
+
+class BrowserSessionResources:
+    def __init__(self, remove_tree=shutil.rmtree):
+        self.remove_tree = remove_tree
+        self.processes = []
+        self.profile_dirs = []
+
+    def track_process(self, process):
+        if process is not None:
+            self.processes.append(process)
+        return process
+
+    def track_profile(self, path):
+        if path:
+            self.profile_dirs.append(path)
+        return path
+
+    def cleanup(self):
+        for process in self.processes:
+            try:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except Exception:
+                        if process.poll() is None:
+                            process.kill()
+                            process.wait(timeout=5)
+            except Exception:
+                pass
+        self.processes.clear()
+
+        for profile_dir in self.profile_dirs:
+            try:
+                self.remove_tree(profile_dir, ignore_errors=True)
+            except Exception:
+                pass
+        self.profile_dirs.clear()
 
 
 def wait_for_cdp_endpoint(endpoint, process=None, timeout=20, urlopen=urllib.request.urlopen, sleep=time.sleep):

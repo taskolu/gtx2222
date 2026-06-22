@@ -49,7 +49,6 @@ def default_settings(home_dir=None):
         "browser_path": "",
         "output_folder": os.path.join(home, "Downloads"),
         "funding_reference": DEFAULT_FUNDING_REFERENCE,
-        "stop_approval_on_first_failure": True,
         "approval_rules": copy.deepcopy(DEFAULT_APPROVAL_RULES),
     }
 
@@ -89,9 +88,6 @@ def normalize_settings(raw_settings=None, home_dir=None):
         value = raw.get(key)
         if isinstance(value, str) and value.strip():
             settings[key] = value.strip()
-
-    if isinstance(raw.get("stop_approval_on_first_failure"), bool):
-        settings["stop_approval_on_first_failure"] = raw["stop_approval_on_first_failure"]
 
     settings["approval_rules"] = _normalized_approval_rules(raw.get("approval_rules"))
     return settings

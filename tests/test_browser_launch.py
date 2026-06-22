@@ -5,6 +5,66 @@ import browser_launch
 
 
 class BrowserLaunchTests(unittest.TestCase):
+    def test_verified_action_uses_progressive_delays_until_success(self):
+        attempts = []
+        waits = []
+
+        def action():
+            attempts.append(len(attempts) + 1)
+
+        browser_launch.run_verified_action(
+            action=action,
+            verify=lambda: len(attempts) == 3,
+            wait=waits.append,
+            description="Creating Unit",
+        )
+
+        self.assertEqual(attempts, [1, 2, 3])
+        self.assertEqual(waits, [500, 1000, 1500])
+
+    def test_verified_action_fails_closed_after_three_attempts(self):
+        attempts = []
+
+        with self.assertRaisesRegex(ValueError, "Owning Unit and Correspondent BIC"):
+            browser_launch.run_verified_action(
+                action=lambda: attempts.append(True),
+                verify=lambda: False,
+                wait=lambda _milliseconds: None,
+                description="Owning Unit and Correspondent BIC",
+            )
+
+        self.assertEqual(len(attempts), 3)
+
+    def test_browser_session_resources_terminate_process_and_remove_profile(self):
+        removed = []
+
+        class FakeProcess:
+            def __init__(self):
+                self.running = True
+                self.terminated = False
+
+            def poll(self):
+                return None if self.running else 0
+
+            def terminate(self):
+                self.terminated = True
+                self.running = False
+
+            def wait(self, timeout):
+                return 0
+
+        process = FakeProcess()
+        resources = browser_launch.BrowserSessionResources(
+            remove_tree=lambda path, ignore_errors: removed.append((path, ignore_errors))
+        )
+        resources.track_process(process)
+        resources.track_profile("C:/Temp/gtx-profile")
+
+        resources.cleanup()
+
+        self.assertTrue(process.terminated)
+        self.assertEqual(removed, [("C:/Temp/gtx-profile", True)])
+
     def test_bundled_edge_cdp_args_disable_renderer_code_integrity(self):
         args = browser_launch.build_edge_cdp_args(
             "msedge.exe",
