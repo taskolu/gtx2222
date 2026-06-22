@@ -15,9 +15,9 @@ Payment entry will use the active payment row's `value_date` directly. It will n
 Creating Unit is selected on the template-search page. The automation will:
 
 1. Select the expected unit when necessary.
-2. Wait 500 milliseconds.
-3. Read the dropdown value back.
-4. Retry up to three times if it does not match.
+2. Read the dropdown value back after 500 milliseconds on the first attempt.
+3. Retry after 1 second on the second attempt if it does not match.
+4. Retry after 1.5 seconds on the third attempt if it still does not match.
 5. Stop the current payment before creating a message if the value still differs.
 
 An already selected value, such as TGBP, still must be read and confirmed.
@@ -28,9 +28,9 @@ On the payment-creation page, the automation will treat Owning Unit and Correspo
 
 1. Select the expected Owning Unit when necessary.
 2. Enter and apply the Correspondent BIC captured from the selected template.
-3. Wait 500 milliseconds.
-4. Read back both values.
-5. Retry the pair up to three times if either value differs.
+3. Read back both values after 500 milliseconds on the first attempt.
+4. Retry the pair after 1 second on the second attempt if either value differs.
+5. Retry the pair after 1.5 seconds on the third attempt if either value still differs.
 6. Stop the current payment before entering payment details if the pair still does not match.
 
 No unit-selection failure may be logged and ignored.
