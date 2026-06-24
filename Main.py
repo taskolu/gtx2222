@@ -59,6 +59,7 @@ from payment_mapping import (
 from browser_launch import (
     BrowserSessionResources,
     build_edge_cdp_args,
+    click_first_ready_locator,
     get_browser_launch_options,
     run_verified_action,
     wait_for_cdp_endpoint,
@@ -332,18 +333,21 @@ class BrowserWorker(QObject):
 
     def _click_create_message(self, page):
         try:
-            page.get_by_role("button", name="Create Message").click()
+            clicked = click_first_ready_locator(
+                [
+                    (page.get_by_role("button", name="Create Message"), "Create Message button"),
+                    (page.locator('input[value="Create Message"]'), "Create Message input"),
+                    (page.locator('button:has-text("Create Message")'), "Create Message fallback button"),
+                ],
+                timeout=30000,
+            )
+            self.signals.progress.emit(f"Clicked {clicked}")
             page.wait_for_load_state('networkidle', timeout=15000)
+            page.get_by_label("Owning Unit").wait_for(state="visible", timeout=30000)
             return True
         except Exception as e:
             self.signals.progress.emit(f"Error clicking Create Message: {e}")
-            try:
-                page.locator('input[value="Create Message"]').click()
-                page.wait_for_load_state('networkidle', timeout=15000)
-                return True
-            except Exception as fallback_e:
-                self.signals.progress.emit(f"Create Message fallback failed: {fallback_e}")
-                return False
+            return False
 
     def _capture_correspondent_identifier(self, page):
         table = page.locator("#rightTree_table_FinInstnId-36")

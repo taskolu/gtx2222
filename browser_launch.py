@@ -8,6 +8,20 @@ import urllib.request
 VERIFICATION_DELAYS_MS = (500, 1000, 1500)
 
 
+def click_first_ready_locator(candidates, timeout=15000):
+    last_error = None
+    for locator, description in candidates:
+        try:
+            first_match = locator.first
+            first_match.wait_for(state="visible", timeout=timeout)
+            first_match.click(timeout=timeout)
+            return description
+        except Exception as exc:
+            last_error = exc
+
+    raise ValueError(f"No clickable locator was ready: {last_error}")
+
+
 def run_verified_action(action, verify, wait, description, delays=VERIFICATION_DELAYS_MS):
     last_error = None
     for delay_ms in delays:

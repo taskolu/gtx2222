@@ -5,6 +5,44 @@ import browser_launch
 
 
 class BrowserLaunchTests(unittest.TestCase):
+    def test_click_first_ready_locator_uses_visible_fallback(self):
+        events = []
+
+        class FakeFirst:
+            def __init__(self, name, fail_wait=False):
+                self.name = name
+                self.fail_wait = fail_wait
+
+            def wait_for(self, state, timeout):
+                events.append((self.name, "wait", state, timeout))
+                if self.fail_wait:
+                    raise TimeoutError(f"{self.name} not visible")
+
+            def click(self, timeout):
+                events.append((self.name, "click", timeout))
+
+        class FakeLocator:
+            def __init__(self, name, fail_wait=False):
+                self.first = FakeFirst(name, fail_wait=fail_wait)
+
+        clicked = browser_launch.click_first_ready_locator(
+            [
+                (FakeLocator("role button", fail_wait=True), "role button"),
+                (FakeLocator("input fallback"), "input fallback"),
+            ],
+            timeout=12000,
+        )
+
+        self.assertEqual(clicked, "input fallback")
+        self.assertEqual(
+            events,
+            [
+                ("role button", "wait", "visible", 12000),
+                ("input fallback", "wait", "visible", 12000),
+                ("input fallback", "click", 12000),
+            ],
+        )
+
     def test_verified_action_uses_progressive_delays_until_success(self):
         attempts = []
         waits = []
