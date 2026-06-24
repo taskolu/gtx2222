@@ -85,7 +85,7 @@ def payment_value_date(payment):
     return str((payment or {}).get("value_date") or "").strip()
 
 
-def correspondent_bic_is_confirmed(input_value, visible_text, expected_bic):
+def correspondent_bic_is_confirmed(input_value, applied_cell_text, expected_bic):
     expected = _normalize_code(expected_bic).upper()
     if not expected:
         return False
@@ -93,5 +93,5 @@ def correspondent_bic_is_confirmed(input_value, visible_text, expected_bic):
     if _normalize_code(input_value).upper() == expected:
         return True
 
-    normalized_text = re.sub(r"\s+", " ", str(visible_text or "").upper())
-    return re.search(rf"(?<![A-Z0-9]){re.escape(expected)}(?![A-Z0-9])", normalized_text) is not None
+    normalized_cell_text = re.sub(r"\s+", " ", str(applied_cell_text or "").upper()).strip()
+    return normalized_cell_text == expected

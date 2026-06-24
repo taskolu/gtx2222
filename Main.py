@@ -411,12 +411,17 @@ class BrowserWorker(QObject):
             correspondent_field = page.get_by_title("Correspondent identifier,")
             actual_bic = correspondent_field.input_value().strip()
             try:
-                visible_text = page.locator("#container-body").inner_text(timeout=1000)
+                applied_bic_cell = page.get_by_role("cell", name=correspondent_id, exact=True).first
+                applied_cell_text = (
+                    applied_bic_cell.inner_text(timeout=1000)
+                    if applied_bic_cell.is_visible(timeout=1000)
+                    else ""
+                )
             except Exception:
-                visible_text = ""
+                applied_cell_text = ""
             return actual_unit == unit and correspondent_bic_is_confirmed(
                 actual_bic,
-                visible_text,
+                applied_cell_text,
                 correspondent_id,
             )
 

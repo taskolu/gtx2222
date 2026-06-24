@@ -90,13 +90,13 @@ class PaymentMappingTests(unittest.TestCase):
     def test_confirms_correspondent_bic_when_input_still_has_value(self):
         self.assertTrue(correspondent_bic_is_confirmed("IRVTUS3NXXX", "", "IRVTUS3NXXX"))
 
-    def test_confirms_correspondent_bic_when_add_replace_moves_value_to_page(self):
-        visible_text = "Correspondent\nIRVTUS3NXXX\nTHE BANK OF NEW YORK MELLON"
+    def test_confirms_correspondent_bic_when_add_replace_moves_value_to_exact_cell(self):
+        cell_text = "IRVTUS3NXXX"
 
-        self.assertTrue(correspondent_bic_is_confirmed("", visible_text, "IRVTUS3NXXX"))
+        self.assertTrue(correspondent_bic_is_confirmed("", cell_text, "IRVTUS3NXXX"))
 
-    def test_does_not_confirm_correspondent_bic_from_partial_text_match(self):
-        visible_text = "Correspondent\nXIRVTUS3NXXXY"
+    def test_does_not_confirm_correspondent_bic_from_unrelated_page_text(self):
+        visible_text = "Template table still contains IRVTUS3NXXX but no applied correspondent cell"
 
         self.assertFalse(correspondent_bic_is_confirmed("", visible_text, "IRVTUS3NXXX"))
 
