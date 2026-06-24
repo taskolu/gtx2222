@@ -61,6 +61,7 @@ from browser_launch import (
     build_edge_cdp_args,
     click_first_ready_locator,
     get_browser_launch_options,
+    run_action_once_then_verify_progressively,
     run_verified_action,
     wait_for_cdp_endpoint,
 )
@@ -397,20 +398,16 @@ class BrowserWorker(QObject):
             f"Confirming owning unit {unit} and correspondent BIC {correspondent_id}"
         )
 
-        def apply_pair():
-            unit_select = page.get_by_label("Owning Unit")
-            unit_select.wait_for(state="visible", timeout=5000)
-            if unit_select.input_value().strip() != unit:
-                unit_select.select_option(unit)
-                page.wait_for_load_state("networkidle", timeout=15000)
+        self._set_owning_unit(page, unit)
 
+        def apply_correspondent_once():
             correspondent_field = page.get_by_title("Correspondent identifier,")
             correspondent_field.wait_for(state="visible", timeout=5000)
             correspondent_field.fill(correspondent_id)
             page.get_by_role("button", name="Add/Replace").click(timeout=10000)
             page.wait_for_load_state("networkidle", timeout=15000)
 
-        def pair_matches():
+        def correspondent_matches():
             actual_unit = page.get_by_label("Owning Unit").input_value().strip()
             correspondent_field = page.get_by_title("Correspondent identifier,")
             actual_bic = correspondent_field.input_value().strip()
@@ -429,9 +426,9 @@ class BrowserWorker(QObject):
                 correspondent_id,
             )
 
-        run_verified_action(
-            action=apply_pair,
-            verify=pair_matches,
+        run_action_once_then_verify_progressively(
+            action=apply_correspondent_once,
+            verify=correspondent_matches,
             wait=page.wait_for_timeout,
             description=f"Owning Unit {unit} and Correspondent BIC {correspondent_id}",
         )

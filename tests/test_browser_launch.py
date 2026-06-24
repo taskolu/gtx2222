@@ -73,6 +73,22 @@ class BrowserLaunchTests(unittest.TestCase):
 
         self.assertEqual(len(attempts), 3)
 
+    def test_action_once_then_verify_progressively_does_not_repeat_action(self):
+        attempts = []
+        checks = []
+        waits = []
+
+        browser_launch.run_action_once_then_verify_progressively(
+            action=lambda: attempts.append("add-replace"),
+            verify=lambda: checks.append(len(checks) + 1) or len(checks) == 3,
+            wait=waits.append,
+            description="Correspondent BIC",
+        )
+
+        self.assertEqual(attempts, ["add-replace"])
+        self.assertEqual(checks, [1, 2, 3])
+        self.assertEqual(waits, [500, 1000, 1500])
+
     def test_browser_session_resources_terminate_process_and_remove_profile(self):
         removed = []
 

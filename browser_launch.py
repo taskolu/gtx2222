@@ -39,6 +39,33 @@ def run_verified_action(action, verify, wait, description, delays=VERIFICATION_D
     raise ValueError(message)
 
 
+def run_action_once_then_verify_progressively(
+    action,
+    verify,
+    wait,
+    description,
+    delays=VERIFICATION_DELAYS_MS,
+):
+    try:
+        action()
+    except Exception as exc:
+        raise ValueError(f"{description} action failed: {exc}") from exc
+
+    last_error = None
+    for delay_ms in delays:
+        wait(delay_ms)
+        try:
+            if verify():
+                return True
+        except Exception as exc:
+            last_error = exc
+
+    message = f"{description} did not match after {len(delays)} checks"
+    if last_error:
+        raise ValueError(f"{message}: {last_error}") from last_error
+    raise ValueError(message)
+
+
 class BrowserSessionResources:
     def __init__(self, remove_tree=shutil.rmtree):
         self.remove_tree = remove_tree
