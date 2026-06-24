@@ -38,6 +38,7 @@ from approval_audit import (
     expected_to_bic,
     format_approved_payments_pdf_name,
     format_payment_copy,
+    approval_result_needs_final_search,
     is_reportable_payment_copy_result,
     is_successful_approval_result_status,
     is_verify_no_search_item_warning,
@@ -1775,6 +1776,7 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                 payment,
                 "Skipped - already processed",
                 f"{search_decision.details}; not found in Verify queue",
+                detail_payload=search_details,
             )
 
         status = "Failed before approval" if search_decision.status == "Ready for approval" else search_decision.status
@@ -1787,7 +1789,7 @@ class ApprovalRunWorker(ApprovalAuditWorker):
 
     def _attach_payment_copies_for_results(self, page, results, payments_by_reference):
         for result in results:
-            if result.get("status") not in {"Approval submitted", "Skipped - already processed"}:
+            if not approval_result_needs_final_search(result):
                 continue
 
             reference = str(result.get("reference") or "").strip()

@@ -22,6 +22,7 @@ from approval_audit import (
     parse_legacy_payment_details,
     parse_payment_details,
     parse_reference_lines,
+    approval_result_needs_final_search,
     is_reportable_payment_copy_result,
     is_successful_approval_result_status,
     is_verify_no_search_item_warning,
@@ -616,6 +617,39 @@ class ApprovalAuditTests(unittest.TestCase):
                 self.assertFalse(
                     is_reportable_payment_copy_result({"status": status, "payment_copy": "copy"})
                 )
+
+    def test_already_processed_result_with_payment_copy_does_not_need_final_search(self):
+        self.assertFalse(
+            approval_result_needs_final_search(
+                {
+                    "status": "Skipped - already processed",
+                    "payment_copy": "APUSDPACS - E008260612AOCYQL\nPayment copy",
+                    "payment_copy_html": "<div>Payment copy</div>",
+                }
+            )
+        )
+
+    def test_already_processed_result_without_payment_copy_still_needs_final_search(self):
+        self.assertTrue(
+            approval_result_needs_final_search(
+                {
+                    "status": "Skipped - already processed",
+                    "payment_copy": "",
+                    "payment_copy_html": "",
+                }
+            )
+        )
+
+    def test_submitted_approval_still_needs_final_search(self):
+        self.assertTrue(
+            approval_result_needs_final_search(
+                {
+                    "status": "Approval submitted",
+                    "payment_copy": "copy",
+                    "payment_copy_html": "<div>copy</div>",
+                }
+            )
+        )
 
     def test_successful_approval_statuses_include_live_gate_updates(self):
         self.assertTrue(is_successful_approval_result_status("Verify details matched"))

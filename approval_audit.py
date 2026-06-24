@@ -272,6 +272,15 @@ def is_reportable_payment_copy_result(result):
     )
 
 
+def approval_result_needs_final_search(result):
+    status = str(result.get("status") or "")
+    if status == "Approval submitted":
+        return True
+    if status == "Skipped - already processed":
+        return not is_reportable_payment_copy_result(result)
+    return False
+
+
 def is_successful_approval_result_status(status):
     return str(status or "") in SUCCESSFUL_APPROVAL_RESULT_STATUSES
 
