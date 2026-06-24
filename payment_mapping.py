@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import re
 
 
 @dataclass(frozen=True)
@@ -82,3 +83,15 @@ def build_narrative(reference, otr_number):
 
 def payment_value_date(payment):
     return str((payment or {}).get("value_date") or "").strip()
+
+
+def correspondent_bic_is_confirmed(input_value, visible_text, expected_bic):
+    expected = _normalize_code(expected_bic).upper()
+    if not expected:
+        return False
+
+    if _normalize_code(input_value).upper() == expected:
+        return True
+
+    normalized_text = re.sub(r"\s+", " ", str(visible_text or "").upper())
+    return re.search(rf"(?<![A-Z0-9]){re.escape(expected)}(?![A-Z0-9])", normalized_text) is not None

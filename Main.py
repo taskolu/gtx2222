@@ -49,6 +49,7 @@ from approval_audit import (
 )
 from payment_mapping import (
     build_narrative,
+    correspondent_bic_is_confirmed,
     format_amount,
     get_pacs_amount_field_ids,
     is_valid_payment_code,
@@ -409,7 +410,15 @@ class BrowserWorker(QObject):
             actual_unit = page.get_by_label("Owning Unit").input_value().strip()
             correspondent_field = page.get_by_title("Correspondent identifier,")
             actual_bic = correspondent_field.input_value().strip()
-            return actual_unit == unit and actual_bic == correspondent_id
+            try:
+                visible_text = page.locator("#container-body").inner_text(timeout=1000)
+            except Exception:
+                visible_text = ""
+            return actual_unit == unit and correspondent_bic_is_confirmed(
+                actual_bic,
+                visible_text,
+                correspondent_id,
+            )
 
         run_verified_action(
             action=apply_pair,

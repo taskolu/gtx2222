@@ -2,6 +2,7 @@ import unittest
 
 from payment_mapping import (
     build_narrative,
+    correspondent_bic_is_confirmed,
     format_amount,
     get_pacs_amount_field_ids,
     is_valid_payment_code,
@@ -85,6 +86,19 @@ class PaymentMappingTests(unittest.TestCase):
 
         self.assertEqual(payment_value_date(first), "23.06.2026")
         self.assertEqual(payment_value_date(second), "24.06.2026")
+
+    def test_confirms_correspondent_bic_when_input_still_has_value(self):
+        self.assertTrue(correspondent_bic_is_confirmed("IRVTUS3NXXX", "", "IRVTUS3NXXX"))
+
+    def test_confirms_correspondent_bic_when_add_replace_moves_value_to_page(self):
+        visible_text = "Correspondent\nIRVTUS3NXXX\nTHE BANK OF NEW YORK MELLON"
+
+        self.assertTrue(correspondent_bic_is_confirmed("", visible_text, "IRVTUS3NXXX"))
+
+    def test_does_not_confirm_correspondent_bic_from_partial_text_match(self):
+        visible_text = "Correspondent\nXIRVTUS3NXXXY"
+
+        self.assertFalse(correspondent_bic_is_confirmed("", visible_text, "IRVTUS3NXXX"))
 
 
 if __name__ == "__main__":
