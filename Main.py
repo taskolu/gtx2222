@@ -317,6 +317,7 @@ class BrowserWorker(QObject):
 
     def _click_create_message(self, page):
         try:
+            page.wait_for_timeout(1000)
             page.get_by_role("button", name="Create Message").click()
             page.wait_for_load_state('networkidle', timeout=15000)
             return True
@@ -826,6 +827,7 @@ class BrowserWorker(QObject):
                         
                         # Create message
                         try:
+                            page.wait_for_timeout(1000)
                             page.get_by_role("button", name="Create Message").click()
                             page.wait_for_load_state('networkidle', timeout=15000) # Increased from 10000
                         except Exception as e:
