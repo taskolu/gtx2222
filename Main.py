@@ -38,31 +38,23 @@ from approval_audit import (
     expected_to_bic,
     format_approved_payments_pdf_name,
     format_payment_copy,
-    approval_result_needs_final_search,
     is_reportable_payment_copy_result,
     is_successful_approval_result_status,
     is_verify_no_search_item_warning,
     normalize_amount,
     normalize_date,
     parse_reference_lines,
-    wait_for_final_approval_status,
 )
 from payment_mapping import (
     build_narrative,
-    correspondent_bic_is_confirmed,
     format_amount,
     get_pacs_amount_field_ids,
     is_valid_payment_code,
-    payment_value_date,
     resolve_payment_template,
 )
 from browser_launch import (
-    BrowserSessionResources,
     build_edge_cdp_args,
-    click_first_ready_locator,
     get_browser_launch_options,
-    run_action_once_then_verify_progressively,
-    run_verified_action,
     wait_for_cdp_endpoint,
 )
 from pdf_export import render_html_pdf_with_playwright
@@ -228,7 +220,6 @@ class BrowserWorker(QObject):
         self.payments_data = payments_data
         self.is_running = True
         self.payment_references = {}  # Dictionary to store payment references
-        self.browser_resources = BrowserSessionResources()
 
     def _find_free_port(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -237,22 +228,14 @@ class BrowserWorker(QObject):
 
     def _launch_bundled_edge_over_cdp(self, playwright, launch_options):
         executable_path = launch_options["executable_path"]
-        user_data_dir = self.browser_resources.track_profile(
-            tempfile.mkdtemp(prefix="gtx_playwright_edge_")
-        )
+        user_data_dir = tempfile.mkdtemp(prefix="gtx_playwright_edge_")
         port = self._find_free_port()
         endpoint = f"http://127.0.0.1:{port}"
         args = build_edge_cdp_args(executable_path, user_data_dir, port)
         self.signals.progress.emit(f"Starting bundled Edge with remote debugging on port {port}")
-        process = self.browser_resources.track_process(
-            subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        )
-        try:
-            wait_for_cdp_endpoint(endpoint, process)
-            browser = playwright.chromium.connect_over_cdp(endpoint)
-        except Exception:
-            self.browser_resources.cleanup()
-            raise
+        process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        wait_for_cdp_endpoint(endpoint, process)
+        browser = playwright.chromium.connect_over_cdp(endpoint)
         context = browser.contexts[0] if browser.contexts else browser.new_context()
         page = context.pages[0] if context.pages else context.new_page()
         return browser, context, page, process
@@ -334,21 +317,18 @@ class BrowserWorker(QObject):
 
     def _click_create_message(self, page):
         try:
-            clicked = click_first_ready_locator(
-                [
-                    (page.get_by_role("button", name="Create Message"), "Create Message button"),
-                    (page.locator('input[value="Create Message"]'), "Create Message input"),
-                    (page.locator('button:has-text("Create Message")'), "Create Message fallback button"),
-                ],
-                timeout=30000,
-            )
-            self.signals.progress.emit(f"Clicked {clicked}")
+            page.get_by_role("button", name="Create Message").click()
             page.wait_for_load_state('networkidle', timeout=15000)
-            page.get_by_label("Owning Unit").wait_for(state="visible", timeout=30000)
             return True
         except Exception as e:
             self.signals.progress.emit(f"Error clicking Create Message: {e}")
-            return False
+            try:
+                page.locator('input[value="Create Message"]').click()
+                page.wait_for_load_state('networkidle', timeout=15000)
+                return True
+            except Exception as fallback_e:
+                self.signals.progress.emit(f"Create Message fallback failed: {fallback_e}")
+                return False
 
     def _capture_correspondent_identifier(self, page):
         table = page.locator("#rightTree_table_FinInstnId-36")
@@ -372,87 +352,20 @@ class BrowserWorker(QObject):
         page.wait_for_load_state('networkidle', timeout=15000)
         page.wait_for_timeout(delay_ms)
 
-    def _set_creating_unit(self, page, unit):
-        self.signals.progress.emit(f"Confirming creating unit {unit}")
-
-        def select_unit():
-            unit_select = page.get_by_label("Creating unit")
-            unit_select.wait_for(state="visible", timeout=5000)
-            if unit_select.input_value().strip() != unit:
-                unit_select.select_option(unit)
-                page.wait_for_load_state("networkidle", timeout=15000)
-
-        def unit_matches():
-            return page.get_by_label("Creating unit").input_value().strip() == unit
-
-        run_verified_action(
-            action=select_unit,
-            verify=unit_matches,
-            wait=page.wait_for_timeout,
-            description=f"Creating Unit {unit}",
-        )
-        self.signals.progress.emit(f"Creating unit confirmed: {unit}")
-
-    def _set_owning_unit_and_correspondent(self, page, unit, correspondent_id):
-        self.signals.progress.emit(
-            f"Confirming owning unit {unit} and correspondent BIC {correspondent_id}"
-        )
-
-        self._set_owning_unit(page, unit)
-
-        def apply_correspondent_once():
-            correspondent_field = page.get_by_title("Correspondent identifier,")
-            correspondent_field.wait_for(state="visible", timeout=5000)
-            correspondent_field.fill(correspondent_id)
-            page.get_by_role("button", name="Add/Replace").click(timeout=10000)
-            page.wait_for_load_state("networkidle", timeout=15000)
-
-        def correspondent_matches():
-            actual_unit = page.get_by_label("Owning Unit").input_value().strip()
-            correspondent_field = page.get_by_title("Correspondent identifier,")
-            actual_bic = correspondent_field.input_value().strip()
-            try:
-                applied_bic_cell = page.get_by_role("cell", name=correspondent_id, exact=True).first
-                applied_cell_text = (
-                    applied_bic_cell.inner_text(timeout=1000)
-                    if applied_bic_cell.is_visible(timeout=1000)
-                    else ""
-                )
-            except Exception:
-                applied_cell_text = ""
-            return actual_unit == unit and correspondent_bic_is_confirmed(
-                actual_bic,
-                applied_cell_text,
-                correspondent_id,
-            )
-
-        run_action_once_then_verify_progressively(
-            action=apply_correspondent_once,
-            verify=correspondent_matches,
-            wait=page.wait_for_timeout,
-            description=f"Owning Unit {unit} and Correspondent BIC {correspondent_id}",
-        )
-        self.signals.progress.emit(
-            f"Owning unit and correspondent BIC confirmed: {unit} / {correspondent_id}"
-        )
-
     def _set_owning_unit(self, page, unit):
-        self.signals.progress.emit(f"Confirming owning unit {unit}")
-
-        def select_unit():
-            unit_select = page.get_by_label("Owning Unit")
-            unit_select.wait_for(state="visible", timeout=5000)
-            if unit_select.input_value().strip() != unit:
-                unit_select.select_option(unit)
-                page.wait_for_load_state("networkidle", timeout=15000)
-
-        run_verified_action(
-            action=select_unit,
-            verify=lambda: page.get_by_label("Owning Unit").input_value().strip() == unit,
-            wait=page.wait_for_timeout,
-            description=f"Owning Unit {unit}",
-        )
-        self.signals.progress.emit(f"Owning unit confirmed: {unit}")
+        try:
+            self.signals.progress.emit(f"Setting owning unit to {unit}")
+            page.get_by_label("Owning Unit").select_option(unit)
+            self._wait_for_jsf_settle(page, "owning unit change")
+        except Exception as e:
+            self.signals.progress.emit(f"Error setting owning unit: {e}")
+            try:
+                selects = page.locator('select').all()
+                if len(selects) > 1:
+                    selects[1].select_option(unit)
+                    self._wait_for_jsf_settle(page, "owning unit fallback change")
+            except Exception as fallback_e:
+                self.signals.progress.emit(f"Owning unit fallback failed: {fallback_e}")
 
     def _fill_pacs_message_ids(self, page):
         msg_id = page.get_by_role("textbox", name="(MsgId) Message Identification")
@@ -690,11 +603,13 @@ class BrowserWorker(QObject):
                 raise ValueError("Could not create PACS message")
             self._handle_license_popup(page)
 
-            self._set_owning_unit_and_correspondent(
-                page,
-                unit,
-                correspondent_id,
-            )
+            self._set_owning_unit(page, unit)
+
+            self.signals.progress.emit(f"Setting correspondent identifier to {correspondent_id}")
+            page.get_by_title("Correspondent identifier,").click()
+            page.get_by_title("Correspondent identifier,").fill(correspondent_id)
+            page.get_by_role("button", name="Add/Replace").click()
+            self._wait_for_jsf_settle(page, "Add/Replace")
             page.get_by_role("link", name="Empty message Text").wait_for(timeout=30000)
 
             try:
@@ -709,7 +624,7 @@ class BrowserWorker(QObject):
             formatted_amount = format_amount(amount, amount_code)
             self._fill_pacs_amount(page, template_name, formatted_amount)
 
-            formatted_date = self.get_formatted_date(payment)
+            formatted_date = self.get_formatted_date(template_name)
             self.signals.progress.emit(f"Setting settlement date to {formatted_date}")
             self._fill_pacs_date(page, formatted_date)
 
@@ -752,9 +667,7 @@ class BrowserWorker(QObject):
                 if use_cdp:
                     browser, context, page, cdp_process = self._launch_bundled_edge_over_cdp(p, launch_options)
                 elif use_persistent_context:
-                    user_data_dir = self.browser_resources.track_profile(
-                        tempfile.mkdtemp(prefix="gtx_playwright_edge_")
-                    )
+                    user_data_dir = tempfile.mkdtemp(prefix="gtx_playwright_edge_")
                     context = p.chromium.launch_persistent_context(user_data_dir, **launch_options)
                     browser = None
                     page = context.pages[0] if context.pages else context.new_page()
@@ -846,7 +759,17 @@ class BrowserWorker(QObject):
                             self.signals.error.emit(f"Could not navigate to template creation for {template_name}")
                             continue  # Skip to next payment
                         
-                        self._set_creating_unit(page, unit)
+                        # Set creating unit (CCT_CHUK or TGBP) based on template
+                        try:
+                            self.signals.progress.emit(f"Setting creating unit to: {unit}")
+                            page.get_by_label("Creating unit").select_option(unit)
+                        except Exception as e:
+                            self.signals.progress.emit(f"Error setting creating unit: {e}")
+                            try:
+                                # Try alternative selector
+                                page.locator('select').first.select_option(unit)
+                            except:
+                                self.signals.progress.emit("Could not set creating unit, continuing anyway")
                         
                         # Enter identifier and search
                         try:
@@ -928,7 +851,20 @@ class BrowserWorker(QObject):
                                 self.signals.error.emit("Could not open envelope tab")
                                 continue  # Skip to next payment
                         
-                        self._set_owning_unit(page, unit)
+                        # Set owning unit if needed (for CCT_CHUK)
+                        if unit == "CCT_CHUK":
+                            try:
+                                self.signals.progress.emit("Setting owning unit to CCT_CHUK")
+                                page.get_by_label("Owning Unit").select_option("CCT_CHUK")
+                            except Exception as e:
+                                self.signals.progress.emit(f"Error setting owning unit: {e}")
+                                try:
+                                    # Try alternative selector
+                                    selects = page.locator('select').all()
+                                    if len(selects) > 1:
+                                        selects[1].select_option("CCT_CHUK")
+                                except:
+                                    self.signals.progress.emit("Could not set owning unit, continuing anyway")
                         
                         # Special handling for APFUNDINGCZK template
                         if template_name == "APFUNDINGCZK":
@@ -964,7 +900,7 @@ class BrowserWorker(QObject):
                                 page.locator('#rightTreeForm\\:SC_16x-46').fill(reference_value)
                                 
                                 # Set tomorrow's date
-                                formatted_date = self.get_formatted_date(payment)
+                                formatted_date = self.get_formatted_date(template_name)  # Already gets tomorrow's date for this template
                                 self.signals.progress.emit(f"Setting date to {formatted_date}")
                                 page.locator('#rightTreeForm\\:Date-41').fill(formatted_date)
                                 
@@ -1094,7 +1030,7 @@ class BrowserWorker(QObject):
                         
                         # Enter date based on template
                         try:
-                            formatted_date = self.get_formatted_date(payment)
+                            formatted_date = self.get_formatted_date(template_name)
                             self.signals.progress.emit(f"Setting date to {formatted_date}")
                             page.get_by_role("textbox", name="Date").click()
                             page.get_by_role("textbox", name="Date").fill(formatted_date)
@@ -1270,19 +1206,18 @@ class BrowserWorker(QObject):
                 
         except Exception as e:
             self.signals.error.emit(f"Automation error: {str(e)}")
-        finally:
-            self.browser_resources.cleanup()
     
     def stop(self):
         self.is_running = False
     
-    def get_formatted_date(self, payment):
+    def get_formatted_date(self, template_name):
         """Get formatted date for a payment based on saved value date or calculate it"""
-        saved_value_date = payment_value_date(payment)
-        if saved_value_date:
-            return saved_value_date
-
-        template_name = payment.get("template", "")
+        # Find the payment data for this template
+        for payment in self.payments_data:
+            if payment['template'] == template_name:
+                # Use the value date from payment data if it exists
+                if 'value_date' in payment and payment['value_date']:
+                    return payment['value_date']
                 
         # Fallback to calculating the date if not found or empty
         today = datetime.now()
@@ -1335,9 +1270,7 @@ class ApprovalAuditWorker(BrowserWorker):
         if use_cdp:
             browser, context, page, cdp_process = self._launch_bundled_edge_over_cdp(playwright, launch_options)
         elif use_persistent_context:
-            user_data_dir = self.browser_resources.track_profile(
-                tempfile.mkdtemp(prefix="gtx_playwright_edge_")
-            )
+            user_data_dir = tempfile.mkdtemp(prefix="gtx_playwright_edge_")
             context = playwright.chromium.launch_persistent_context(user_data_dir, **launch_options)
             browser = None
             page = context.pages[0] if context.pages else context.new_page()
@@ -1552,7 +1485,6 @@ class ApprovalAuditWorker(BrowserWorker):
                     cdp_process.terminate()
             except Exception:
                 pass
-            self.browser_resources.cleanup()
 
 
 class VerifyReferenceNotFound(Exception):
@@ -1791,7 +1723,6 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                 payment,
                 "Skipped - already processed",
                 f"{search_decision.details}; not found in Verify queue",
-                detail_payload=search_details,
             )
 
         status = "Failed before approval" if search_decision.status == "Ready for approval" else search_decision.status
@@ -1804,44 +1735,17 @@ class ApprovalRunWorker(ApprovalAuditWorker):
 
     def _attach_payment_copies_for_results(self, page, results, payments_by_reference):
         for result in results:
-            if not approval_result_needs_final_search(result):
+            if result.get("status") not in {"Approved", "Skipped - already processed"}:
                 continue
 
             reference = str(result.get("reference") or "").strip()
             payment = payments_by_reference.get(reference)
             try:
-                details, final_status = wait_for_final_approval_status(
-                    fetch_details=lambda: self._search_details(page, reference),
-                    wait=page.wait_for_timeout,
-                    timeout_seconds=30,
-                    on_pending=lambda decision: self.signals.progress.emit(
-                        f"Waiting for final status for {reference}; currently "
-                        f"{decision.page_status or 'unknown'}"
-                    ),
-                )
-
-                if final_status.outcome == "rejected":
-                    result["status"] = "Rejected"
-                    result["details"] = (
-                        f"{result.get('details', '')}; final Search status: "
-                        f"{final_status.page_status}"
-                    )
-                    self._emit_result_update(result)
-                    continue
-
-                if final_status.outcome != "approved":
-                    result["status"] = "Status unknown"
-                    result["details"] = (
-                        f"{result.get('details', '')}; final Search status was not confirmed: "
-                        f"{final_status.page_status or 'missing'}"
-                    )
-                    self._emit_result_update(result)
-                    continue
-
+                details = self._search_details(page, reference)
                 if payment:
                     audit_result = compare_payment_details(payment, reference, details["text"])
                     if audit_result.issues:
-                        result["status"] = "Status unknown"
+                        result["status"] = "Status unknown" if result.get("status") == "Approved" else "Needs manual review"
                         result["details"] = (
                             f"{result.get('details', '')}; final Search copy check found: "
                             + "; ".join(audit_result.issues)
@@ -1849,17 +1753,10 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                         self._emit_result_update(result)
                         continue
 
-                if result.get("status") == "Approval submitted":
-                    result["status"] = "Approved"
-                result["details"] = (
-                    f"{result.get('details', '')}; final Search status confirmed: "
-                    f"{final_status.page_status}"
-                )
                 result["payment_copy"] = format_payment_copy(result.get("template", ""), reference, details["text"])
                 result["payment_copy_html"] = details["html"]
                 self._emit_result_update(result)
             except Exception as exc:
-                result["status"] = "Status unknown"
                 result["details"] = f"{result.get('details', '')}; payment copy capture failed: {exc}"
                 self._emit_result_update(result)
 
@@ -1957,7 +1854,7 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                         result = self._build_result(
                             approval_reference,
                             payment,
-                            "Approval submitted",
+                            "Approved",
                             success_text or "Message is successfully approved",
                         )
                         self._emit_and_store(results, result)
@@ -1996,7 +1893,6 @@ class ApprovalRunWorker(ApprovalAuditWorker):
                     cdp_process.terminate()
             except Exception:
                 pass
-            self.browser_resources.cleanup()
 
 
 # Main application window
@@ -2612,8 +2508,11 @@ class SimplePaymentApp(QMainWindow):
         defaults_layout.setContentsMargins(14, 18, 14, 14)
         funding_reference_input = QLineEdit(display_funding_reference(self._default_funding_reference()))
         funding_reference_input.setFixedWidth(180)
+        stop_on_failure_checkbox = QCheckBox("Stop approval on first failure")
+        stop_on_failure_checkbox.setChecked(bool(self.app_settings.get("stop_approval_on_first_failure", True)))
         defaults_layout.addWidget(QLabel("Funding reference:"), 0, 0)
         defaults_layout.addWidget(funding_reference_input, 0, 1)
+        defaults_layout.addWidget(stop_on_failure_checkbox, 1, 1)
 
         def browse_output():
             folder = QFileDialog.getExistingDirectory(dialog, "Select Reports Folder", output_folder_input.text())
@@ -2659,6 +2558,7 @@ class SimplePaymentApp(QMainWindow):
                 "browser_path": self.app_settings.get("browser_path", ""),
                 "output_folder": output_folder_input.text().strip(),
                 "funding_reference": parse_funding_reference(funding_reference_input.text()),
+                "stop_approval_on_first_failure": stop_on_failure_checkbox.isChecked(),
                 "approval_rules": collect_rules(),
             })
             self._apply_runtime_settings()
@@ -3357,13 +3257,7 @@ class SimplePaymentApp(QMainWindow):
                 counts["skipped"] += 1
             elif status == "Needs manual review":
                 counts["review"] += 1
-            elif status in {
-                "Failed before approval",
-                "Failed after verify click before OK",
-                "Rejected",
-                "Status unknown",
-                "Search/read failed",
-            }:
+            elif status in {"Failed before approval", "Failed after verify click before OK", "Status unknown", "Search/read failed"}:
                 counts["errors"] += 1
         labels = {
             "approved": f"Approved: {counts['approved']}",
@@ -3731,12 +3625,8 @@ class SimplePaymentApp(QMainWindow):
             return "Amount / CCY / Date read back"
         if status == "Approved":
             return "Final search copy matched" if result.get("payment_copy_html") else "OK clicked"
-        if status == "Approval submitted":
-            return "Checking final status"
         if status == "Skipped - already processed":
             return "Already processed"
-        if status == "Rejected":
-            return "Final status rejected"
         if status in {"Needs manual review", "Failed before approval", "Search/read failed"}:
             return "Stopped before approval"
         if status == "Failed after verify click before OK":
@@ -3771,10 +3661,10 @@ class SimplePaymentApp(QMainWindow):
                 gates[key] = "done"
             gates["confirmation_checked"] = "failed"
             return gates
-        if status in {"Status unknown", "Rejected"}:
-            for key in ("verify_found", "details_matched", "verify_clicked", "confirmation_checked", "ok_clicked"):
+        if status == "Status unknown":
+            for key in ("verify_found", "details_matched", "verify_clicked", "confirmation_checked"):
                 gates[key] = "done"
-            gates["final_copy_matched"] = "failed"
+            gates["ok_clicked"] = "failed"
             return gates
         if status == "Skipped - already processed":
             for key in gates:
@@ -3789,11 +3679,6 @@ class SimplePaymentApp(QMainWindow):
             for key in ("verify_found", "details_matched", "verify_clicked", "confirmation_checked"):
                 gates[key] = "done"
             gates["ok_clicked"] = "active"
-            return gates
-        if status == "Approval submitted":
-            for key in ("verify_found", "details_matched", "verify_clicked", "confirmation_checked", "ok_clicked"):
-                gates[key] = "done"
-            gates["final_copy_matched"] = "active"
             return gates
         if status == "Approved":
             for key in ("verify_found", "details_matched", "verify_clicked", "confirmation_checked", "ok_clicked"):
@@ -4027,7 +3912,6 @@ class SimplePaymentApp(QMainWindow):
             "Needs manual review",
             "Failed before approval",
             "Failed after verify click before OK",
-            "Rejected",
             "Status unknown",
             "Search/read failed",
         }:

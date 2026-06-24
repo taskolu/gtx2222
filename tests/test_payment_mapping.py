@@ -2,11 +2,9 @@ import unittest
 
 from payment_mapping import (
     build_narrative,
-    correspondent_bic_is_confirmed,
     format_amount,
     get_pacs_amount_field_ids,
     is_valid_payment_code,
-    payment_value_date,
     resolve_payment_template,
 )
 
@@ -79,26 +77,6 @@ class PaymentMappingTests(unittest.TestCase):
         self.assertNotIn("\n", narrative)
         self.assertLessEqual(len(narrative), 140)
         self.assertIn("OTR6591649", narrative)
-
-    def test_duplicate_templates_keep_their_own_value_dates(self):
-        first = {"template": "APUSDPACS", "value_date": "23.06.2026"}
-        second = {"template": "APUSDPACS", "value_date": "24.06.2026"}
-
-        self.assertEqual(payment_value_date(first), "23.06.2026")
-        self.assertEqual(payment_value_date(second), "24.06.2026")
-
-    def test_confirms_correspondent_bic_when_input_still_has_value(self):
-        self.assertTrue(correspondent_bic_is_confirmed("IRVTUS3NXXX", "", "IRVTUS3NXXX"))
-
-    def test_confirms_correspondent_bic_when_add_replace_moves_value_to_exact_cell(self):
-        cell_text = "IRVTUS3NXXX"
-
-        self.assertTrue(correspondent_bic_is_confirmed("", cell_text, "IRVTUS3NXXX"))
-
-    def test_does_not_confirm_correspondent_bic_from_unrelated_page_text(self):
-        visible_text = "Template table still contains IRVTUS3NXXX but no applied correspondent cell"
-
-        self.assertFalse(correspondent_bic_is_confirmed("", visible_text, "IRVTUS3NXXX"))
 
 
 if __name__ == "__main__":

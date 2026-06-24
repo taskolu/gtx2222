@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-import re
 
 
 @dataclass(frozen=True)
@@ -79,19 +78,3 @@ def build_narrative(reference, otr_number):
     base_text = f"Funding {str(reference or 'CO5590').strip()}"
     full_text = f"{base_text} {str(otr_number).strip()}" if otr_number else base_text
     return full_text[:140]
-
-
-def payment_value_date(payment):
-    return str((payment or {}).get("value_date") or "").strip()
-
-
-def correspondent_bic_is_confirmed(input_value, applied_cell_text, expected_bic):
-    expected = _normalize_code(expected_bic).upper()
-    if not expected:
-        return False
-
-    if _normalize_code(input_value).upper() == expected:
-        return True
-
-    normalized_cell_text = re.sub(r"\s+", " ", str(applied_cell_text or "").upper()).strip()
-    return normalized_cell_text == expected

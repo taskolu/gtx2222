@@ -12,7 +12,6 @@ from approval_audit import (
     build_approval_precheck_decision,
     build_approval_audit_html,
     build_payment_copy_preview_html,
-    classify_final_approval_status,
     compare_payment_details,
     expected_to_bic,
     extract_gtexchange_print_view_html,
@@ -22,13 +21,11 @@ from approval_audit import (
     parse_legacy_payment_details,
     parse_payment_details,
     parse_reference_lines,
-    approval_result_needs_final_search,
     is_reportable_payment_copy_result,
     is_successful_approval_result_status,
     is_verify_no_search_item_warning,
     supports_automated_approval,
     supports_pacs_approval,
-    wait_for_final_approval_status,
 )
 
 
@@ -326,59 +323,6 @@ class ApprovalAuditTests(unittest.TestCase):
         self.assertEqual(status, "MESSAGE AWAITING ARCHIVING")
         self.assertTrue(approval_status_is_already_processed(status))
 
-    def test_final_approval_status_accepts_processed_terminal_statuses(self):
-        for status in (
-            "MESSAGE AWAITING ARCHIVING",
-            "MESSAGE ARCHIVED",
-            "MESSAGE VERIFIED",
-            "MESSAGE PROCESSED",
-        ):
-            with self.subTest(status=status):
-                decision = classify_final_approval_status(f"Status {status}")
-                self.assertEqual(decision.outcome, "approved")
-                self.assertEqual(decision.page_status, status)
-
-    def test_final_approval_status_identifies_rejection(self):
-        for status in ("MESSAGE REJECTED", "REJECTED"):
-            with self.subTest(status=status):
-                decision = classify_final_approval_status(f"Status {status}")
-                self.assertEqual(decision.outcome, "rejected")
-                self.assertEqual(decision.page_status, status)
-
-    def test_final_approval_status_leaves_nonterminal_status_unknown(self):
-        decision = classify_final_approval_status(
-            "Status MESSAGE AWAITING VERIFICATION"
-        )
-
-        self.assertEqual(decision.outcome, "unknown")
-        self.assertEqual(decision.page_status, "MESSAGE AWAITING VERIFICATION")
-
-    def test_final_approval_status_uses_first_displayed_status(self):
-        decision = classify_final_approval_status(
-            "Status MESSAGE AWAITING ARCHIVING\n"
-            "History Information\nStatus MESSAGE AWAITING VERIFICATION"
-        )
-
-        self.assertEqual(decision.outcome, "approved")
-        self.assertEqual(decision.page_status, "MESSAGE AWAITING ARCHIVING")
-
-    def test_wait_for_final_status_retries_nonterminal_result(self):
-        responses = iter((
-            {"text": "Status MESSAGE AWAITING VERIFICATION"},
-            {"text": "Status MESSAGE AWAITING ARCHIVING"},
-        ))
-        waits = []
-
-        details, decision = wait_for_final_approval_status(
-            fetch_details=lambda: next(responses),
-            wait=waits.append,
-            timeout_seconds=30,
-        )
-
-        self.assertEqual(decision.outcome, "approved")
-        self.assertEqual(details["text"], "Status MESSAGE AWAITING ARCHIVING")
-        self.assertEqual(waits, [3000])
-
     def test_identifies_verify_no_search_item_warning_text(self):
         self.assertTrue(is_verify_no_search_item_warning("Warning Warning\nNo search item found"))
         self.assertTrue(is_verify_no_search_item_warning("No search item found"))
@@ -612,44 +556,6 @@ class ApprovalAuditTests(unittest.TestCase):
         )
         self.assertFalse(is_reportable_payment_copy_result({"status": "Needs manual review", "payment_copy": "copy"}))
         self.assertFalse(is_reportable_payment_copy_result({"status": "Approved", "payment_copy": ""}))
-        for status in ("Rejected", "Status unknown", "Approval submitted"):
-            with self.subTest(status=status):
-                self.assertFalse(
-                    is_reportable_payment_copy_result({"status": status, "payment_copy": "copy"})
-                )
-
-    def test_already_processed_result_with_payment_copy_does_not_need_final_search(self):
-        self.assertFalse(
-            approval_result_needs_final_search(
-                {
-                    "status": "Skipped - already processed",
-                    "payment_copy": "APUSDPACS - E008260612AOCYQL\nPayment copy",
-                    "payment_copy_html": "<div>Payment copy</div>",
-                }
-            )
-        )
-
-    def test_already_processed_result_without_payment_copy_still_needs_final_search(self):
-        self.assertTrue(
-            approval_result_needs_final_search(
-                {
-                    "status": "Skipped - already processed",
-                    "payment_copy": "",
-                    "payment_copy_html": "",
-                }
-            )
-        )
-
-    def test_submitted_approval_still_needs_final_search(self):
-        self.assertTrue(
-            approval_result_needs_final_search(
-                {
-                    "status": "Approval submitted",
-                    "payment_copy": "copy",
-                    "payment_copy_html": "<div>copy</div>",
-                }
-            )
-        )
 
     def test_successful_approval_statuses_include_live_gate_updates(self):
         self.assertTrue(is_successful_approval_result_status("Verify details matched"))

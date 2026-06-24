@@ -19,7 +19,7 @@ class AppConfigTests(unittest.TestCase):
 
         self.assertEqual(settings["funding_reference"], DEFAULT_FUNDING_REFERENCE)
         self.assertEqual(settings["output_folder"], os.path.join("/Users/example", "Downloads"))
-        self.assertNotIn("stop_approval_on_first_failure", settings)
+        self.assertTrue(settings["stop_approval_on_first_failure"])
         self.assertTrue(any(rule["template"] == "APUSDPACS" for rule in settings["approval_rules"]))
         usd_rule = next(rule for rule in settings["approval_rules"] if rule["template"] == "APUSDPACS")
         aud_rule = next(rule for rule in settings["approval_rules"] if rule["template"] == "APAUDPACS")
@@ -46,7 +46,7 @@ class AppConfigTests(unittest.TestCase):
         self.assertEqual(settings["browser_path"], "C:/Tools/msedge.exe")
         self.assertEqual(settings["output_folder"], "C:/Reports")
         self.assertEqual(settings["funding_reference"], "CO6000")
-        self.assertNotIn("stop_approval_on_first_failure", settings)
+        self.assertFalse(settings["stop_approval_on_first_failure"])
         self.assertEqual(settings["approval_rules"][0]["to_bic"], "CUSTOMBICXXX")
         self.assertEqual(settings["approval_rules"][0]["owning_unit"], "CUSTOM_UNIT")
 
