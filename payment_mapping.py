@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 
 
 @dataclass(frozen=True)
@@ -70,8 +71,13 @@ def get_pacs_amount_field_ids():
 
 def format_amount(amount, code=None):
     cleaned = str(amount).replace("$", "").replace("€", "").replace("£", "").replace(",", "").strip()
+    if not cleaned:
+        raise ValueError("Amount is blank")
+    numeric_amount = float(cleaned)
+    if not math.isfinite(numeric_amount):
+        raise ValueError("Amount is not finite")
     decimals = 0 if _normalize_code(code) in ZERO_DECIMAL_CODES else 2
-    return f"{round(float(cleaned), decimals):.{decimals}f}"
+    return f"{round(numeric_amount, decimals):.{decimals}f}"
 
 
 def build_narrative(reference, otr_number):

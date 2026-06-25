@@ -58,6 +58,12 @@ class PaymentMappingTests(unittest.TestCase):
         self.assertEqual(format_amount("1,936.457"), "1936.46")
         self.assertEqual(format_amount(43622.72), "43622.72")
 
+    def test_rejects_missing_or_nan_amounts(self):
+        for value in ("", "nan", float("nan")):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    format_amount(value)
+
     def test_formats_jpy_amount_without_decimals(self):
         self.assertEqual(format_amount(660436.0, "JPYCUKCIT"), "660436")
         self.assertEqual(format_amount("660,436.49", "APJPYPACS"), "660436")
